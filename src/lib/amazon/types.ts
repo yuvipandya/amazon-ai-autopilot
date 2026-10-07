@@ -91,3 +91,68 @@ export interface AmazonCredentials {
   profileId?: string;
   region: "na" | "eu" | "fe";
 }
+
+export interface AmazonSearchTermRow {
+  date?: string;
+  startDate?: string;
+  endDate?: string;
+
+  campaignId?: string | number;
+  campaignName?: string;
+
+  adGroupId?: string | number;
+  adGroupName?: string;
+
+  keywordId?: string | number;
+  keyword?: string;
+  keywordType?: string;
+  matchType?: string;
+  targeting?: string;
+
+  searchTerm?: string;
+
+  impressions?: number | string;
+  clicks?: number | string;
+  cost?: number | string;
+  costPerClick?: number | string;
+  clickThroughRate?: number | string;
+
+  purchases1d?: number | string;
+  purchases7d?: number | string;
+  purchases14d?: number | string;
+  purchases30d?: number | string;
+
+  sales1d?: number | string;
+  sales7d?: number | string;
+  sales14d?: number | string;
+  sales30d?: number | string;
+
+  unitsSoldClicks1d?: number | string;
+  unitsSoldClicks7d?: number | string;
+  unitsSoldClicks14d?: number | string;
+  unitsSoldClicks30d?: number | string;
+}
+
+export interface AmazonSearchTermReportOptions {
+  profileId: string;
+  startDate: string;
+  endDate: string;
+}
+
+export interface AmazonSearchTerm {
+  amazonSearchTermId: string;
+  campaignId: string;
+  searchTerm: string;
+  date?: string;
+  keywordId?: string;
+  adGroupId?: string;
+  keyword?: string;
+  keywordType?: string;
+  matchType?: string;
+  targeting?: string;
+  impressions: number;
+  clicks: number;
+  orders: number;
+  spend: number;
+  sales: number;
+}

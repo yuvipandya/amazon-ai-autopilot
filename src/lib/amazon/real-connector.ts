@@ -1,5 +1,6 @@
 import { IAmazonConnector } from "./connector.interface";
 import { AmazonAuthService, AMAZON_ENDPOINTS } from "./auth.service";
+import { AmazonReportingService } from "./reporting.service";
 import {
   AmazonCampaignSummary,
   AmazonCredentials,
@@ -141,6 +142,18 @@ export class RealAmazonConnector implements IAmazonConnector {
       state: k.state,
       bid: k.bid || 0,
     }));
+  }
+
+  async getSearchTerms(
+    options: {
+      profileId: string;
+      startDate: string;
+      endDate: string;
+    }
+  ) {
+    const reportingService = new AmazonReportingService(this.credentials);
+
+    return reportingService.getSearchTerms(options);
   }
 
   async updateKeywordBid(
@@ -364,3 +377,4 @@ export class RealAmazonConnector implements IAmazonConnector {
     };
   }
 }
+

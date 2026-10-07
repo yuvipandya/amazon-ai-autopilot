@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getAmazonConnector } from "@/lib/amazon/connector-factory";
+import { getAmazonReportingService } from "@/lib/amazon/reporting-factory";
 
 export interface SyncOptions {
   amazonAccountId: string;
@@ -45,7 +46,10 @@ export class IngestionService {
 
     try {
       const { connector, mode } = getAmazonConnector(account);
-      const effectiveProfileId = account.profileId || undefined;
+      const reporting = getAmazonReportingService(account);
+      const effectiveProfileId =
+        account.profileId ||
+        (account.isLiveAccount ? undefined : "mock-profile-in-001");
 
       // 1. Fetch campaigns from connector
       const externalCampaigns = await connector.getCampaigns(effectiveProfileId);
@@ -145,9 +149,135 @@ export class IngestionService {
         }
       }
 
-      const searchTermsCount = await prisma.searchTerm.count({
+      // 3. Fetch and ingest Amazon search-term reporting data.
+      // Amazon supports a maximum 31-day search-term report window.
+      // Our sync periods are capped at 30 days, leaving a safety margin.
+      let searchTermsCount = await prisma.searchTerm.count({
         where: { campaign: { amazonAccountId: account.id } },
       });
+
+      if (effectiveProfileId) {
+        const periodDays =
+          reportPeriod === "LAST_7_DAYS"
+            ? 7
+            : reportPeriod === "LAST_30_DAYS"
+              ? 30
+              : 14;
+
+        const endDate = new Date();
+        endDate.setUTCDate(endDate.getUTCDate() - 1);
+
+        const startDate = new Date(endDate);
+        startDate.setUTCDate(startDate.getUTCDate() - (periodDays - 1));
+
+        const formatDate = (date: Date) =>
+          date.toISOString().slice(0, 10);
+
+        const externalSearchTerms = await reporting.service.getSearchTerms({
+          profileId: effectiveProfileId,
+          startDate: formatDate(startDate),
+          endDate: formatDate(endDate),
+        });
+
+        // The existing SearchTerm model is unique by campaign + value,
+        // so aggregate DAILY Amazon rows before persisting them.
+        const aggregated = new Map<
+          string,
+          {
+            campaignId: string;
+            searchTerm: string;
+            amazonSearchTermId: string;
+            impressions: number;
+            clicks: number;
+            orders: number;
+            spend: number;
+            sales: number;
+            queryCount: number;
+          }
+        >();
+
+        for (const row of externalSearchTerms) {
+          const key = `${row.campaignId}:${row.searchTerm}`;
+
+          const current = aggregated.get(key);
+
+          if (!current) {
+            aggregated.set(key, {
+              campaignId: row.campaignId,
+              searchTerm: row.searchTerm,
+              amazonSearchTermId: row.amazonSearchTermId,
+              impressions: row.impressions,
+              clicks: row.clicks,
+              orders: row.orders,
+              spend: row.spend,
+              sales: row.sales,
+              queryCount: 1,
+            });
+          } else {
+            current.impressions += row.impressions;
+            current.clicks += row.clicks;
+            current.orders += row.orders;
+            current.spend += row.spend;
+            current.sales += row.sales;
+            current.queryCount += 1;
+          }
+        }
+
+        for (const item of aggregated.values()) {
+          const localCampaign = await prisma.campaign.findFirst({
+            where: {
+              amazonAccountId: account.id,
+              amazonCampaignId: item.campaignId,
+            },
+          });
+
+          if (!localCampaign) {
+            continue;
+          }
+
+          const acos =
+            item.sales > 0
+              ? item.spend / item.sales
+              : item.spend > 0
+                ? 1
+                : 0;
+
+          await prisma.searchTerm.upsert({
+            where: {
+              campaignId_value: {
+                campaignId: localCampaign.id,
+                value: item.searchTerm,
+              },
+            },
+            update: {
+              amazonSearchTermId: item.amazonSearchTermId,
+              impressions: item.impressions,
+              clicks: item.clicks,
+              orders: item.orders,
+              spend: item.spend,
+              sales: item.sales,
+              acos,
+              queryCount: item.queryCount,
+            },
+            create: {
+              campaignId: localCampaign.id,
+              amazonSearchTermId: item.amazonSearchTermId,
+              value: item.searchTerm,
+              impressions: item.impressions,
+              clicks: item.clicks,
+              orders: item.orders,
+              spend: item.spend,
+              sales: item.sales,
+              acos,
+              queryCount: item.queryCount,
+            },
+          });
+        }
+
+        searchTermsCount = await prisma.searchTerm.count({
+          where: { campaign: { amazonAccountId: account.id } },
+        });
+      }
 
       const now = new Date();
       await prisma.amazonAccount.update({
@@ -194,3 +324,6 @@ export class IngestionService {
     }
   }
 }
+
+
+

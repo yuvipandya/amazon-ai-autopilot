@@ -90,6 +90,68 @@ export class MockAmazonConnector implements IAmazonConnector {
     ];
   }
 
+  async getSearchTerms(
+    _options: {
+      profileId: string;
+      startDate: string;
+      endDate: string;
+    }
+  ) {
+    return [
+      {
+        amazonSearchTermId: "mock-camp-001:kundan bridal necklace",
+        campaignId: "mock-camp-001",
+        searchTerm: "kundan bridal necklace",
+        date: "2026-10-06",
+        keywordId: "mock-kw-001",
+        adGroupId: "mock-adgroup-001",
+        keyword: "kundan bridal necklace",
+        keywordType: "EXACT",
+        matchType: "EXACT",
+        targeting: "kundan bridal necklace",
+        impressions: 1840,
+        clicks: 74,
+        orders: 8,
+        spend: 412.5,
+        sales: 6840,
+      },
+      {
+        amazonSearchTermId: "mock-camp-001:bridal kundan necklace",
+        campaignId: "mock-camp-001",
+        searchTerm: "bridal kundan necklace",
+        date: "2026-10-06",
+        keywordId: "mock-kw-001",
+        adGroupId: "mock-adgroup-001",
+        keyword: "kundan bridal necklace",
+        keywordType: "PHRASE",
+        matchType: "PHRASE",
+        targeting: "kundan bridal necklace",
+        impressions: 960,
+        clicks: 39,
+        orders: 4,
+        spend: 221,
+        sales: 3020,
+      },
+      {
+        amazonSearchTermId: "mock-camp-002:cheap imitation necklace",
+        campaignId: "mock-camp-002",
+        searchTerm: "cheap imitation necklace",
+        date: "2026-10-06",
+        keywordId: "mock-kw-001",
+        adGroupId: "mock-adgroup-001",
+        keyword: "kundan bridal necklace",
+        keywordType: "BROAD",
+        matchType: "BROAD",
+        targeting: "kundan bridal necklace",
+        impressions: 2210,
+        clicks: 126,
+        orders: 0,
+        spend: 518,
+        sales: 0,
+      },
+    ];
+  }
+
   async updateKeywordBid(
     _profileId: string,
     params: { keywordId: string; newBid: number; previousBid: number }
@@ -261,3 +323,4 @@ export class MockAmazonConnector implements IAmazonConnector {
     };
   }
 }
+

@@ -17,6 +17,14 @@ export interface IAmazonConnector {
   getCampaigns(profileId?: string): Promise<AmazonCampaignSummary[]>;
   getKeywords(profileId: string, campaignId: string): Promise<AmazonKeywordSummary[]>;
 
+  getSearchTerms(
+    options: {
+      profileId: string;
+      startDate: string;
+      endDate: string;
+    }
+  ): Promise<import("./types").AmazonSearchTerm[]>;
+
   updateKeywordBid(
     profileId: string,
     params: {
@@ -66,3 +74,4 @@ export interface IAmazonConnector {
     expectedBudget: number
   ): Promise<AmazonVerificationResult>;
 }
+
