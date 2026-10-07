@@ -162,11 +162,16 @@ export class SchedulerWorkerService {
 
       // Only attempt autonomous execution if account is Level 3 and not paused
       if (account.automationLevel >= 3 && !account.automationPaused) {
+        // Autonomous execution is strictly limited to bid optimization.
+        // Non-bid recommendations must remain PENDING for human approval.
         const pendingLowRisk = await prisma.recommendation.findMany({
           where: {
             amazonAccountId: account.id,
             status: "PENDING",
             risk: "LOW",
+            actionType: {
+              in: ["INCREASE_BID", "DECREASE_BID"],
+            },
           },
           take: 5,
         });

@@ -114,6 +114,94 @@ async function runAllTests() {
   });
   assert(!autopilotPolicyAuth.authorized, "Approval Separation: Blocks AUTOPILOT_POLICY for HIGH risk actions");
 
+  // 2d. AUTOPILOT_POLICY must be strictly bid-only
+  const autonomousHarvestAuth = await authorizeExecution({
+    amazonAccountId: account.id,
+    actionType: "HARVEST_KEYWORD",
+    risk: "LOW",
+    approvalSource: "AUTOPILOT_POLICY",
+  });
+  assert(
+    !autonomousHarvestAuth.authorized,
+    "Bid-Only Autopilot: Rejects AUTOPILOT_POLICY harvest action"
+  );
+
+  // 2e. AUTOPILOT_POLICY must reject negative-keyword actions
+  const autonomousNegativeKeywordAuth = await authorizeExecution({
+    amazonAccountId: account.id,
+    actionType: "ADD_NEGATIVE_KEYWORD",
+    risk: "LOW",
+    approvalSource: "AUTOPILOT_POLICY",
+  });
+  assert(
+    !autonomousNegativeKeywordAuth.authorized,
+    "Bid-Only Autopilot: Rejects AUTOPILOT_POLICY negative-keyword action"
+  );
+
+  // 2f. AUTOPILOT_POLICY must reject budget changes
+  const autonomousBudgetAuth = await authorizeExecution({
+    amazonAccountId: account.id,
+    actionType: "INCREASE_BUDGET",
+    risk: "LOW",
+    approvalSource: "AUTOPILOT_POLICY",
+    currentValue: 100,
+    recommendedValue: 110,
+  });
+  assert(
+    !autonomousBudgetAuth.authorized,
+    "Bid-Only Autopilot: Rejects AUTOPILOT_POLICY budget change"
+  );
+
+  // 2g. Valid autonomous bid actions must still be authorized at Level 3
+  const originalAutomationLevel = account.automationLevel;
+  await prisma.amazonAccount.update({
+    where: { id: account.id },
+    data: { automationLevel: 3, automationPaused: false },
+  });
+
+  const autonomousIncreaseBidAuth = await authorizeExecution({
+    amazonAccountId: account.id,
+    actionType: "INCREASE_BID",
+    risk: "LOW",
+    approvalSource: "AUTOPILOT_POLICY",
+    currentValue: 10,
+    recommendedValue: 11,
+  });
+  assert(
+    autonomousIncreaseBidAuth.authorized,
+    "Bid-Only Autopilot: Allows AUTOPILOT_POLICY INCREASE_BID when safety checks pass"
+  );
+
+  const autonomousDecreaseBidAuth = await authorizeExecution({
+    amazonAccountId: account.id,
+    actionType: "DECREASE_BID",
+    risk: "LOW",
+    approvalSource: "AUTOPILOT_POLICY",
+    currentValue: 10,
+    recommendedValue: 9,
+  });
+  assert(
+    autonomousDecreaseBidAuth.authorized,
+    "Bid-Only Autopilot: Allows AUTOPILOT_POLICY DECREASE_BID when safety checks pass"
+  );
+
+  // 2h. Human-approved non-bid actions retain their existing behavior
+  const humanHarvestAuth = await authorizeExecution({
+    amazonAccountId: account.id,
+    actionType: "HARVEST_KEYWORD",
+    risk: "LOW",
+    approvalSource: "HUMAN_APPROVAL",
+  });
+  assert(
+    humanHarvestAuth.authorized,
+    "Approval Separation: HUMAN_APPROVAL harvest remains authorized"
+  );
+
+  await prisma.amazonAccount.update({
+    where: { id: account.id },
+    data: { automationLevel: originalAutomationLevel },
+  });
+
   // -------------------------------------------------------------------------
   // TEST 3: Amazon Connector & Verification State Machine
   // -------------------------------------------------------------------------
@@ -238,6 +326,52 @@ async function runAllTests() {
 
   const cycleRes = await SchedulerWorkerService.runAutopilotCycle(account.id);
   assert(cycleRes.status === "COMPLETED", "Scheduler Worker: Full SYNC -> MEASURE cycle completed");
+
+  // Scheduler must never autonomously execute a non-bid recommendation.
+  const schedulerCampaign = await prisma.campaign.findFirst({
+    where: { amazonAccountId: account.id },
+  });
+
+  if (schedulerCampaign) {
+    const schedulerNonBidRec = await prisma.recommendation.create({
+      data: {
+        amazonAccountId: account.id,
+        campaignId: schedulerCampaign.id,
+        actionType: "HARVEST_KEYWORD",
+        title: "Scheduler Bid-Only Guard Test",
+        description: "Verifies non-bid recommendations remain pending.",
+        reason: "Enterprise safety suite",
+        confidence: 0.9,
+        risk: "LOW",
+        status: "PENDING",
+        approvalStatus: "PENDING",
+        requiresApproval: false,
+      },
+    });
+
+    const schedulerOriginalLevel = account.automationLevel;
+
+    await prisma.amazonAccount.update({
+      where: { id: account.id },
+      data: { automationLevel: 3, automationPaused: false },
+    });
+
+    await SchedulerWorkerService.runAutopilotCycle(account.id);
+
+    const schedulerNonBidAfter = await prisma.recommendation.findUnique({
+      where: { id: schedulerNonBidRec.id },
+    });
+
+    assert(
+      schedulerNonBidAfter?.status === "PENDING",
+      "Scheduler Bid-Only Guard: Non-bid AUTOPILOT_POLICY recommendation remains PENDING"
+    );
+
+    await prisma.amazonAccount.update({
+      where: { id: account.id },
+      data: { automationLevel: schedulerOriginalLevel },
+    });
+  }
 
   // -------------------------------------------------------------------------
   // TEST 7: API Transient Retry Handling

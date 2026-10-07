@@ -297,7 +297,27 @@ export async function authorizeExecution(
     });
   }
 
-  // 8. Entity ownership check
+  // 8. Autonomous execution is strictly bid-only.
+  // HUMAN_APPROVAL retains the existing behavior.
+  if (
+    input.approvalSource === "AUTOPILOT_POLICY" &&
+    input.actionType !== "INCREASE_BID" &&
+    input.actionType !== "DECREASE_BID"
+  ) {
+    checks.push({
+      name: "Autopilot bid-only policy",
+      passed: false,
+      message: `Autonomous execution is restricted to bid adjustments. Action ${input.actionType} requires HUMAN_APPROVAL.`,
+    });
+    return {
+      authorized: false,
+      approvalSource: input.approvalSource,
+      reason: "Autonomous execution is restricted to bid adjustments.",
+      checks,
+    };
+  }
+
+  // 9. Entity ownership check
   if (input.entityType && input.entityId) {
     if (input.entityType === "keyword") {
       const kw = await prisma.keyword.findUnique({
