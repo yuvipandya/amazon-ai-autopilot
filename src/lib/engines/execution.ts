@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getAmazonConnector } from "@/lib/amazon/connector-factory";
+import { validateRecommendation } from "./validation";
 import { authorizeExecution } from "./authorization";
-import { ApprovalSource, ExecutionState } from "@/generated/prisma/client";
 
 export type ExecuteInput = {
   recommendationId: string;
@@ -48,6 +48,18 @@ export async function executeRecommendation(
 
   if (recommendation.status !== "PENDING") {
     throw new Error(`Recommendation is already ${recommendation.status}.`);
+  }
+
+  // 2. Mandatory deterministic validation boundary.
+  // Every execution caller — human, scheduler, or future API — must
+  // pass the same recommendation validation before any authorization
+  // or Amazon write can occur.
+  const validation = await validateRecommendation(recommendation);
+
+  if (!validation.passed) {
+    throw new Error(
+      `Recommendation validation rejected execution: ${validation.reason}`
+    );
   }
 
   const account = recommendation.amazonAccount;

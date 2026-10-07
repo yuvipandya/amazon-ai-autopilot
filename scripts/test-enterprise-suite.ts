@@ -241,6 +241,65 @@ async function runAllTests() {
         executionState: "PENDING",
       },
     });
+ // -----------------------------------------------------------------------
+    // TEST 3b: Execution Boundary Must Re-Validate Before Any Write
+    // -----------------------------------------------------------------------
+    const unsafeBidRec = await prisma.recommendation.create({
+      data: {
+        amazonAccountId: account.id,
+        campaignId: testKw.campaignId,
+        keywordId: testKw.id,
+        actionType: "INCREASE_BID",
+        title: "Unsafe Execution Boundary Test",
+        description: "Verifies execution cannot bypass deterministic validation.",
+        reason: "Enterprise security regression test",
+        currentValue: initialBid,
+        recommendedValue: Number((initialBid * 1.2).toFixed(2)),
+        changePercent: 20,
+        confidence: 0.99,
+        risk: "LOW",
+        status: "PENDING",
+        executionState: "PENDING",
+      },
+    });
+
+    let unsafeExecutionRejected = false;
+
+    try {
+      await executeRecommendation({
+        recommendationId: unsafeBidRec.id,
+        approvalSource: "HUMAN_APPROVAL",
+        actor: "test-suite",
+      });
+    } catch (error) {
+      unsafeExecutionRejected =
+        error instanceof Error &&
+        error.message.includes("Recommendation validation rejected execution");
+    }
+
+    assert(
+      unsafeExecutionRejected,
+      "Execution Boundary: Rejects unsafe bid before connector write"
+    );
+
+    const unsafeRecAfter = await prisma.recommendation.findUnique({
+      where: { id: unsafeBidRec.id },
+    });
+
+    const unsafeKeywordAfter = await prisma.keyword.findUnique({
+      where: { id: testKw.id },
+    });
+
+    assert(
+      unsafeRecAfter?.status === "PENDING",
+      "Execution Boundary: Rejected recommendation remains PENDING"
+    );
+
+    assert(
+      Math.abs((unsafeKeywordAfter?.bid ?? 0) - initialBid) < 0.001,
+      "Execution Boundary: Unsafe bid does not modify keyword"
+    );
+
 
     const execResult = await executeRecommendation({
       recommendationId: testRec.id,
