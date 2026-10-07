@@ -1,4 +1,4 @@
-import { prisma } from "../src/lib/prisma";
+﻿import { prisma } from "../src/lib/prisma";
 import { validateRecommendation } from "../src/lib/engines/validation";
 import { authorizeExecution } from "../src/lib/engines/authorization";
 import { executeRecommendation } from "../src/lib/engines/execution";
@@ -21,10 +21,10 @@ async function runAllTests() {
   function assert(condition: boolean, testName: string, detail?: string) {
     totalTests++;
     if (condition) {
-      console.log(`✅ [PASS] ${testName}`);
+      console.log(`âœ… [PASS] ${testName}`);
       passedTests++;
     } else {
-      console.error(`❌ [FAIL] ${testName}: ${detail || "Condition not met"}`);
+      console.error(`âŒ [FAIL] ${testName}: ${detail || "Condition not met"}`);
     }
   }
 
@@ -323,6 +323,44 @@ async function runAllTests() {
     // -------------------------------------------------------------------------
     console.log("\n--- TEST GROUP 4: Verified Rollback Architecture ---");
 
+    // Rollback must respect the account-level kill switch even when the
+    // rollback engine is called directly.
+    await prisma.amazonAccount.update({
+      where: { id: account.id },
+      data: { automationPaused: true },
+    });
+
+    let pausedRollbackRejected = false;
+
+    try {
+      await rollbackRecommendation({
+        recommendationId: testRec.id,
+      });
+    } catch (error) {
+      pausedRollbackRejected =
+        error instanceof Error &&
+        error.message.includes("Rollback execution is blocked by the kill switch");
+    }
+
+    assert(
+      pausedRollbackRejected,
+      "Rollback Kill Switch: Rejects rollback while automation is paused"
+    );
+
+    const pausedRollbackKeyword = await prisma.keyword.findUnique({
+      where: { id: testKw.id },
+    });
+
+    assert(
+      Math.abs((pausedRollbackKeyword?.bid ?? 0) - testRec.recommendedValue!) < 0.001,
+      "Rollback Kill Switch: Paused rollback does not modify keyword"
+    );
+
+    // Resume automation before the legitimate rollback test.
+    await prisma.amazonAccount.update({
+      where: { id: account.id },
+      data: { automationPaused: false },
+    });
     const rollbackResult = await rollbackRecommendation({
       recommendationId: testRec.id,
     });
@@ -356,7 +394,7 @@ async function runAllTests() {
   });
 
   assert(econ.tacos === 0.2, "BI TACoS: Correctly computed TACoS as 20%");
-  assert(econ.contributionProfit === 25000, "BI Contribution Profit: Accurately calculated ₹25,000 profit");
+  assert(econ.contributionProfit === 25000, "BI Contribution Profit: Accurately calculated â‚¹25,000 profit");
   assert(econ.breakEvenAcos > 0, "BI Break-even: Accurately calculated break-even ACoS");
 
   // Inventory-aware PPC check
@@ -497,3 +535,4 @@ runAllTests()
   .finally(async () => {
     await prisma.$disconnect();
   });
+

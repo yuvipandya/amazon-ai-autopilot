@@ -74,6 +74,16 @@ export async function rollbackRecommendation(
   }
 
   const account = originalAudit.amazonAccount;
+
+  // Defense-in-depth kill switch.
+  // Rollback is a write operation and must never bypass the account-level
+  // automation pause, even when called directly outside the API route.
+  if (account.automationPaused) {
+    throw new Error(
+      "Automation is paused. Rollback execution is blocked by the kill switch."
+    );
+  }
+
   const { connector, mode } = getAmazonConnector(account);
   const effectiveProfileId = account.profileId || "default-profile";
 
