@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: amazon-autopilot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: autopilot
+      POSTGRES_PASSWORD: autopilot_dev_password
+      POSTGRES_DB: amazon_autopilot
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

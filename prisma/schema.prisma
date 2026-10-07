@@ -1,0 +1,462 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StrategyMode {
+  CONSERVATIVE
+  BALANCED
+  AGGRESSIVE
+}
+
+enum AccountStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+enum CampaignStatus {
+  ENABLED
+  PAUSED
+  ARCHIVED
+}
+
+enum SearchTermClassification {
+  WINNER
+  WASTE
+  NEUTRAL
+  UNDERFUNDED_WINNER
+  INSUFFICIENT_DATA
+  PROMISING
+  HIGH_SPEND_ZERO_ORDER
+  HIGH_TRAFFIC_LOW_CVR
+  EXPENSIVE_CONVERTER
+  BRAND
+  COMPETITOR
+  DUPLICATE
+  CANNIBALIZATION
+}
+
+enum RecommendationStatus {
+  PENDING
+  APPROVED
+  EXECUTED
+  IGNORED
+  LOCKED
+  REJECTED
+}
+
+enum ExecutionState {
+  PENDING
+  SUBMITTED
+  AMAZON_ACCEPTED
+  VERIFIED_SUCCESS
+  FAILED
+  UNKNOWN
+}
+
+enum ApprovalSource {
+  HUMAN_APPROVAL
+  AUTOPILOT_POLICY
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ActionType {
+  INCREASE_BID
+  DECREASE_BID
+  INCREASE_BUDGET
+  DECREASE_BUDGET
+  HARVEST_KEYWORD
+  ADD_NEGATIVE_KEYWORD
+  LISTING_CHANGE
+  ROLLBACK
+}
+
+enum JobType {
+  SYNC_CAMPAIGNS
+  SYNC_METRICS
+  ANALYZE_BIDS
+  ANALYZE_SEARCH_TERMS
+  AUTOPILOT_CYCLE
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+model Organization {
+  id           String       @id @default(cuid())
+  name         String
+  strategyMode StrategyMode @default(BALANCED)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  amazonAccounts AmazonAccount[]
+}
+
+model AmazonAccount {
+  id                String          @id @default(cuid())
+  organizationId    String
+  sellerName        String
+  marketplace       String
+  sellerId          String
+  status            AccountStatus   @default(ACTIVE)
+  automationLevel   Int             @default(2)
+
+  strategyMode      StrategyMode    @default(BALANCED)
+  maxBidChange      Float           @default(15)
+  maxBudgetChange   Float           @default(20)
+  automationPaused  Boolean         @default(false)
+
+  // Live Amazon Credentials & Connection State
+  isLiveAccount     Boolean         @default(false)
+  profileId         String?
+  marketplaceId     String?
+  region            String          @default("eu")
+  lwaClientId       String?
+  lwaClientSecret   String?
+  lwaRefreshToken   String?
+  lastSyncAt        DateTime?
+  syncStatus        String          @default("IDLE")
+  syncError         String?
+
+  organization      Organization    @relation(fields: [organizationId], references: [id])
+  products          Product[]
+  campaigns         Campaign[]
+  recommendations   Recommendation[]
+  auditLogs         AuditLog[]
+  syncJobs          SyncJob[]
+  experiments       Experiment[]
+  learningOutcomes  LearningOutcome[]
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([organizationId])
+}
+
+model Product {
+  id                  String   @id @default(cuid())
+  amazonAccountId     String
+  asin                String   @unique
+  sku                 String   @unique
+  amazonProductId     String?
+  title               String
+  category            String
+  price               Float
+  costPerUnit         Float
+  inventory           Int
+  inboundInventory    Int      @default(0)
+  salesVelocity7d     Float    @default(0)
+  daysOfCover         Float    @default(999)
+  estimatedCogs       Float?
+  referralFeePercent  Float    @default(0.15)
+  fbaFeePerUnit       Float    @default(50.0)
+  targetAcos          Float    @default(0.22)
+  listingScore        Float    @default(82)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  amazonAccount       AmazonAccount       @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+  campaigns           Campaign[]
+  metrics             PerformanceMetric[]
+  recommendations     Recommendation[]
+  listingAudits       ListingAudit[]
+
+  @@index([amazonAccountId])
+}
+
+model Campaign {
+  id                String         @id @default(cuid())
+  amazonAccountId   String
+  productId         String?
+  amazonCampaignId  String?
+  name              String
+  campaignType      String
+  targetingType     String
+  status            CampaignStatus @default(ENABLED)
+  dailyBudget       Float
+  currentSpend      Float          @default(0)
+  sales             Float          @default(0)
+  orders            Int            @default(0)
+  impressions       Int            @default(0)
+  clicks            Int            @default(0)
+  ctr               Float          @default(0)
+  cpc               Float          @default(0)
+  acos              Float          @default(0)
+  roas              Float          @default(0)
+  lastSyncAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  amazonAccount     AmazonAccount    @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+  product           Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  keywords          Keyword[]
+  searchTerms       SearchTerm[]
+  metrics           PerformanceMetric[]
+  recommendations   Recommendation[]
+
+  @@index([amazonAccountId])
+  @@index([productId])
+  @@index([amazonCampaignId])
+}
+
+model Keyword {
+  id              String   @id @default(cuid())
+  campaignId      String
+  amazonKeywordId String?
+  adGroupId       String?
+  value           String
+  matchType       String
+  bid             Float
+  status          String   @default("ACTIVE")
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  orders          Int      @default(0)
+  spend           Float    @default(0)
+  sales           Float    @default(0)
+  acos            Float    @default(0)
+  lastSyncAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign        Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recommendations Recommendation[]
+
+  @@unique([campaignId, value, matchType])
+  @@index([campaignId])
+  @@index([amazonKeywordId])
+}
+
+model SearchTerm {
+  id                 String                  @id @default(cuid())
+  campaignId         String
+  amazonSearchTermId String?
+  value              String
+  classification     SearchTermClassification @default(NEUTRAL)
+  impressions        Int                     @default(0)
+  clicks             Int                     @default(0)
+  orders             Int                     @default(0)
+  spend              Float                   @default(0)
+  sales              Float                   @default(0)
+  acos               Float                   @default(0)
+  queryCount         Int                     @default(1)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  campaign           Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recommendations    Recommendation[]
+
+  @@unique([campaignId, value])
+  @@index([campaignId])
+}
+
+model PerformanceMetric {
+  id          String   @id @default(cuid())
+  productId   String?
+  campaignId  String?
+  date        DateTime
+  revenue     Float    @default(0)
+  adSpend     Float    @default(0)
+  orders      Int      @default(0)
+  units       Int      @default(0)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  conversion  Float    @default(0)
+  ctr         Float    @default(0)
+  cpc         Float    @default(0)
+  acos        Float    @default(0)
+  roas        Float    @default(0)
+  profit      Float    @default(0)
+
+  product     Product?  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([productId, date])
+  @@index([campaignId, date])
+}
+
+model Recommendation {
+  id                 String               @id @default(cuid())
+  amazonAccountId    String
+  productId          String?
+  campaignId         String?
+  keywordId          String?
+  searchTermId       String?
+  actionType         ActionType
+  title              String
+  description        String
+  reason             String
+  currentValue       Float?
+  recommendedValue   Float?
+  changePercent      Float?
+  expectedImpact     String?
+  confidence         Float
+  risk               RiskLevel
+  status             RecommendationStatus @default(PENDING)
+  executionState     ExecutionState       @default(PENDING)
+  approvalStatus     ApprovalStatus       @default(PENDING)
+  approvalSource     ApprovalSource       @default(HUMAN_APPROVAL)
+  approvalActor      String?
+  approvalTimestamp  DateTime?
+  amazonRequestId    String?
+  beforeSnapshot     String?
+  afterSnapshot      String?
+  verifiedAt         DateTime?
+  idempotencyKey     String?
+  connectorMode      String               @default("DEMO")
+  executionError     String?
+  dataWindow         String?
+  requiresApproval   Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  executedAt         DateTime?
+
+  amazonAccount      AmazonAccount        @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+  product            Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
+  campaign           Campaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  keyword            Keyword?             @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  searchTerm         SearchTerm?          @relation(fields: [searchTermId], references: [id], onDelete: SetNull)
+  auditLogs          AuditLog[]
+  learningOutcomes   LearningOutcome[]
+
+  @@index([amazonAccountId, status])
+  @@index([productId])
+  @@index([campaignId])
+  @@index([idempotencyKey])
+}
+
+model AuditLog {
+  id               String   @id @default(cuid())
+  amazonAccountId  String
+  recommendationId String?
+  entityType       String
+  entityId         String
+  action           String
+  previousValue    String?
+  newValue         String?
+  reason           String
+  aiModel          String?
+  promptVersion    String?
+  strategyVersion  String?
+  confidence       Float?
+  approvalStatus   String
+  executionResult  String
+  rawResponse      String?
+  rollbackInfo     String?
+  amazonRequestId  String?
+  connectorMode    String   @default("DEMO")
+  createdAt        DateTime @default(now())
+
+  amazonAccount    AmazonAccount   @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+
+  @@index([amazonAccountId, createdAt])
+  @@index([recommendationId])
+}
+
+model SyncJob {
+  id              String        @id @default(cuid())
+  amazonAccountId String
+  type            JobType
+  status          JobStatus     @default(PENDING)
+  retryCount      Int           @default(0)
+  maxRetries      Int           @default(3)
+  nextRetryTime   DateTime?
+  lockedAt        DateTime?
+  lockedBy        String?
+  idempotencyKey  String?       @unique
+  payload         String?
+  result          String?
+  error           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  amazonAccount   AmazonAccount @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+
+  @@index([amazonAccountId, status])
+  @@index([status, nextRetryTime])
+}
+
+model Experiment {
+  id              String        @id @default(cuid())
+  amazonAccountId String
+  name            String
+  hypothesis      String
+  targetEntity    String
+  baselineMetric  String
+  testPeriodDays  Int           @default(14)
+  changeApplied   String
+  status          String        @default("RUNNING")
+  resultMetric    String?
+  concludedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  amazonAccount   AmazonAccount @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+
+  @@index([amazonAccountId])
+}
+
+model LearningOutcome {
+  id                 String         @id @default(cuid())
+  amazonAccountId    String
+  recommendationId   String?
+  actionType         ActionType
+  strategy           String
+  predictedImpact    String
+  actualImpact       String?
+  observedDeltaAcos  Float?
+  observedDeltaSales Float?
+  isSuccessful       Boolean?
+  evaluatedAt        DateTime?
+  createdAt          DateTime       @default(now())
+
+  amazonAccount      AmazonAccount  @relation(fields: [amazonAccountId], references: [id], onDelete: Cascade)
+  recommendation     Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+
+  @@index([amazonAccountId])
+  @@index([recommendationId])
+}
+
+model ListingAudit {
+  id                          String   @id @default(cuid())
+  productId                   String
+  currentTitle                String
+  recommendedTitle            String?
+  currentBullets              String?
+  recommendedBullets          String?
+  currentBackendKeywords      String?
+  recommendedBackendKeywords  String?
+  auditScore                  Float    @default(0)
+  reason                      String
+  status                      String   @default("PENDING_REVIEW")
+  version                     Int      @default(1)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  product                     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
