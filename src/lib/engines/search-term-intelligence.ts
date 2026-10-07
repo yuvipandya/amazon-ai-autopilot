@@ -1,9 +1,17 @@
 export type SearchTermClassification =
   | "WINNER"
-  | "UNDERFUNDED_WINNER"
   | "WASTE"
+  | "NEUTRAL"
+  | "UNDERFUNDED_WINNER"
+  | "INSUFFICIENT_DATA"
+  | "PROMISING"
   | "HIGH_SPEND_ZERO_ORDER"
-  | "NEUTRAL";
+  | "HIGH_TRAFFIC_LOW_CVR"
+  | "EXPENSIVE_CONVERTER"
+  | "BRAND"
+  | "COMPETITOR"
+  | "DUPLICATE"
+  | "CANNIBALIZATION";
 
 export interface SearchTermMetrics {
   impressions: number;

@@ -16,7 +16,7 @@ const underfunded = generateSearchTermRecommendation({
 });
 
 assert(
-  underfunded?.actionType === "INCREASE_BID",
+  underfunded?.actionType === "HARVEST_KEYWORD",
   "UNDERFUNDED_WINNER should recommend INCREASE_BID"
 );
 

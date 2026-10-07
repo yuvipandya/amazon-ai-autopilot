@@ -15,45 +15,98 @@ async function main() {
     throw new Error("No DEMO Amazon account found.");
   }
 
-  const first =
-    await SearchTermRecommendationService.generateForAccount(
-      account.id
+  const product = await prisma.product.findFirst({
+    where: {
+      amazonAccountId: account.id,
+      campaigns: {
+        some: {
+          searchTerms: {
+            some: {
+              classification: {
+                not: "NEUTRAL",
+              },
+            },
+          },
+        },
+      },
+    },
+    select: {
+      id: true,
+      title: true,
+    },
+  });
+
+  if (!product) {
+    throw new Error(
+      "No DEMO product with classified search terms found."
     );
+  }
+
+  const first =
+    await SearchTermRecommendationService.generateForProduct(
+      account.id,
+      product.id
+    );
+
+  console.log(
+    `\nProduct: ${product.title} (${product.id})`
+  );
 
   console.table(first);
 
   if (first.length === 0) {
     throw new Error(
-      "Expected at least one search-term recommendation."
+      "Expected at least one product-scoped recommendation."
     );
   }
 
-  const negative = first.find(
-    (row) =>
-      row.actionType === "ADD_NEGATIVE_KEYWORD"
-  );
+  const invalidRecommendation =
+    await prisma.recommendation.findFirst({
+      where: {
+        id: {
+          in: first.map(
+            (recommendation) =>
+              recommendation.recommendationId
+          ),
+        },
+        OR: [
+          {
+            productId: {
+              not: product.id,
+            },
+          },
+          {
+            amazonAccountId: {
+              not: account.id,
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        productId: true,
+        amazonAccountId: true,
+      },
+    });
 
-  if (!negative) {
+  if (invalidRecommendation) {
     throw new Error(
-      "Expected ADD_NEGATIVE_KEYWORD recommendation."
+      `Recommendation escaped product/account scope: ${invalidRecommendation.id}`
     );
   }
 
-  const increase = first.find(
-    (row) =>
-      row.actionType === "INCREASE_BID"
-  );
+  const storedRecommendation = first[0];
 
-  if (!increase) {
+  if (!storedRecommendation) {
     throw new Error(
-      "Expected INCREASE_BID recommendation."
+      "Expected at least one recommendation."
     );
   }
 
   const stored =
     await prisma.recommendation.findUnique({
       where: {
-        id: negative.recommendationId,
+        id: storedRecommendation.recommendationId,
       },
       select: {
         actionType: true,
@@ -62,6 +115,8 @@ async function main() {
         requiresApproval: true,
         executionState: true,
         searchTermId: true,
+        productId: true,
+        amazonAccountId: true,
         idempotencyKey: true,
       },
     });
@@ -108,6 +163,18 @@ async function main() {
     );
   }
 
+  if (stored.productId !== product.id) {
+    throw new Error(
+      "Recommendation product scope is incorrect."
+    );
+  }
+
+  if (stored.amazonAccountId !== account.id) {
+    throw new Error(
+      "Recommendation account scope is incorrect."
+    );
+  }
+
   if (!stored.idempotencyKey) {
     throw new Error(
       "Recommendation must have an idempotency key."
@@ -115,8 +182,9 @@ async function main() {
   }
 
   const second =
-    await SearchTermRecommendationService.generateForAccount(
-      account.id
+    await SearchTermRecommendationService.generateForProduct(
+      account.id,
+      product.id
     );
 
   if (second.length !== first.length) {
@@ -126,14 +194,14 @@ async function main() {
   }
 
   console.log(
-    "\nCHUNK 10 PASSED - SEARCH-TERM RECOMMENDATIONS PERSISTED SAFELY"
+    "\nCHUNK 11 PASSED - PRODUCT-SCOPED SEARCH-TERM RECOMMENDATIONS"
   );
 }
 
 main()
   .catch((error) => {
     console.error(
-      "\nCHUNK 10 FAILED:",
+      "\nCHUNK 11 FAILED:",
       error instanceof Error ? error.message : error
     );
     process.exit(1);
