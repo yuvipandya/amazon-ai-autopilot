@@ -11,6 +11,7 @@
     "test:safety": "tsx scripts/test-safety.ts",
     "test:gemini": "tsx scripts/test-gemini.ts",
     "test:enterprise": "tsx scripts/test-enterprise-suite.ts",
+    "test:amazon-reporting": "tsx scripts/test-amazon-reporting.ts",
     "test": "tsx scripts/test-safety.ts && tsx scripts/test-gemini.ts && tsx scripts/test-enterprise-suite.ts"
   },
   "dependencies": {
@@ -39,3 +40,4 @@
     "typescript": "^5"
   }
 }
+
