@@ -141,7 +141,6 @@ export class SchedulerWorkerService {
                   changePercent: 8,
                   expectedImpact: "Capture more high intent conversion traffic.",
                   confidence: 0.88,
-                  risk: "LOW",
                   status: "PENDING",
                   approvalStatus: "PENDING",
                   requiresApproval: account.automationLevel < 3,
@@ -165,15 +164,14 @@ export class SchedulerWorkerService {
         // Autonomous execution is strictly limited to bid optimization.
         // Non-bid recommendations must remain PENDING for human approval.
         const pendingLowRisk = await prisma.recommendation.findMany({
-          where: {
-            amazonAccountId: account.id,
-            status: "PENDING",
-            risk: "LOW",
-            actionType: {
-              in: ["INCREASE_BID", "DECREASE_BID"],
-            },
-          },
-          take: 5,
+           where: {
+        	amazonAccountId: account.id,
+        	status: "PENDING",
+        	actionType: {
+          	  in: ["INCREASE_BID", "DECREASE_BID"],
+                },
+      	   },
+           take: 5,
         });
 
         for (const rec of pendingLowRisk) {

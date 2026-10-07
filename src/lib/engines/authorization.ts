@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 export type ApprovalSource = "HUMAN_APPROVAL" | "AUTOPILOT_POLICY";
 
 export interface AuthorizationInput {
+
   organizationId?: string;
   amazonAccountId: string;
   recommendationId?: string;
@@ -158,27 +159,14 @@ export async function authorizeExecution(
     passed: true,
     message: `Action ${input.actionType} is supported.`,
   });
-
-  // 5. Critical Risk Guard
-  if (input.risk === "CRITICAL") {
-    checks.push({
-      name: "Critical risk check",
-      passed: false,
-      message: "Actions marked with CRITICAL risk cannot be executed automatically or directly.",
-    });
-    return {
-      authorized: false,
-      approvalSource: input.approvalSource,
-      reason: "Critical risk actions are blocked by policy.",
-      checks,
-    };
-  }
+// 5. Model risk is informational only.
+  // LLM-generated risk must never authorize or block execution.
   checks.push({
-    name: "Critical risk check",
+    name: "Model risk (informational)",
     passed: true,
-    message: `Risk level is ${input.risk}.`,
+    message: `Model-provided risk is informational only (${input.risk}).`,
   });
-
+  
   // 6. Hard safety limits (bid 15% ceiling and budget limit)
   if (input.actionType === "INCREASE_BID" || input.actionType === "DECREASE_BID") {
     const cur = input.currentValue;
@@ -255,24 +243,10 @@ export async function authorizeExecution(
       };
     }
 
-    if (input.risk !== "LOW") {
-      checks.push({
-        name: "Autopilot risk threshold",
-        passed: false,
-        message: `Autonomous execution only permits LOW risk actions. Current risk is ${input.risk}.`,
-      });
-      return {
-        authorized: false,
-        approvalSource: input.approvalSource,
-        reason: "Non-low risk actions require explicit HUMAN_APPROVAL.",
-        checks,
-      };
-    }
-
     checks.push({
       name: "Autopilot policy authorization",
       passed: true,
-      message: "Level 3 Autopilot permits autonomous execution for low-risk actions.",
+      message: "Level 3 Autopilot permits autonomous execution subject to deterministic policy and safety checks.",
     });
   } else {
     // HUMAN_APPROVAL workflow

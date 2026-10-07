@@ -102,6 +102,14 @@ async function runAllTests() {
     where: { id: account.id },
     data: { automationPaused: false },
   });
+  
+  // Set Level 3 before testing autonomous policy behavior.
+  const originalAutomationLevel = account.automationLevel;
+
+  await prisma.amazonAccount.update({
+    where: { id: account.id },
+    data: { automationLevel: 3, automationPaused: false },
+  });
 
   // 2c. Separation of Human Approval vs Autopilot Policy
   const autopilotPolicyAuth = await authorizeExecution({
@@ -112,7 +120,10 @@ async function runAllTests() {
     currentValue: 10,
     recommendedValue: 11,
   });
-  assert(!autopilotPolicyAuth.authorized, "Approval Separation: Blocks AUTOPILOT_POLICY for HIGH risk actions");
+  assert(
+    autopilotPolicyAuth.authorized,
+    "Deterministic Autopilot Policy: HIGH model risk does not override safe bid authorization"
+  );
 
   // 2d. AUTOPILOT_POLICY must be strictly bid-only
   const autonomousHarvestAuth = await authorizeExecution({
@@ -153,12 +164,7 @@ async function runAllTests() {
   );
 
   // 2g. Valid autonomous bid actions must still be authorized at Level 3
-  const originalAutomationLevel = account.automationLevel;
-  await prisma.amazonAccount.update({
-    where: { id: account.id },
-    data: { automationLevel: 3, automationPaused: false },
-  });
-
+  
   const autonomousIncreaseBidAuth = await authorizeExecution({
     amazonAccountId: account.id,
     actionType: "INCREASE_BID",
