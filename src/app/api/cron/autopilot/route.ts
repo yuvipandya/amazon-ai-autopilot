@@ -7,13 +7,17 @@ export async function POST(request: Request) {
     const authHeader = request.headers.get("authorization");
     const cronSecret = process.env.CRON_SECRET;
 
-    // Optional bearer token check if CRON_SECRET is configured
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    // Cron authentication is mandatory.
+// Never allow scheduler execution without a secret.
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json({ error: "Unauthorized cron request" }, { status: 401 });
     }
 
     const accounts = await prisma.amazonAccount.findMany({
-      where: { status: "ACTIVE" },
+      where: {
+        status: "ACTIVE",
+        organizationId: process.env.AUTOPILOT_ORGANIZATION_ID,
+      },
       select: { id: true, sellerName: true },
     });
 

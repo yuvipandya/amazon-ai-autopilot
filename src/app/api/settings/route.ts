@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { AmazonAuthService } from "@/lib/amazon/auth.service";
+import { requireAuth, getAuthorizedAccount } from "@/lib/auth/authorization";
 
 const validStrategies = [
   "CONSERVATIVE",
@@ -10,12 +11,17 @@ const validStrategies = [
 
 export async function GET(request: Request) {
   try {
+    await requireAuth();
+
     const { searchParams } = new URL(request.url);
     const accountId = searchParams.get("accountId");
 
     const account = accountId
-      ? await prisma.amazonAccount.findUnique({ where: { id: accountId } })
-      : await prisma.amazonAccount.findFirst({ orderBy: { createdAt: "asc" } });
+      ? await getAuthorizedAccount(accountId)
+      : await prisma.amazonAccount.findFirst({
+          where: { organizationId: (await requireAuth()).user.organizationId },
+          orderBy: { createdAt: "asc" },
+        });
 
     if (!account) {
       return NextResponse.json({ error: "Amazon account not found" }, { status: 404 });
@@ -60,6 +66,8 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    await requireAuth();
+
     const body = await request.json();
 
     const {
@@ -85,9 +93,7 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const account = await prisma.amazonAccount.findUnique({
-      where: { id: accountId },
-    });
+    const account = await getAuthorizedAccount(accountId);
 
     if (!account) {
       return NextResponse.json(

@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, getAuthorizedProduct } from "@/lib/auth/authorization";
 import {
   generateSearchTermRecommendation,
 } from "@/lib/ai/gemini";
 
 export async function POST(request: Request) {
   try {
+    await requireAuth();
+
     const body = await request.json();
     const productId = body?.productId as string | undefined;
 
@@ -16,19 +19,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const product = await prisma.product.findUnique({
-      where: {
-        id: productId,
-      },
-      include: {
-        amazonAccount: true,
-        campaigns: {
-          include: {
-            searchTerms: true,
-          },
-        },
-      },
-    });
+    const product = await getAuthorizedProduct(productId);
 
     if (!product) {
       return NextResponse.json(
@@ -177,7 +168,7 @@ export async function POST(request: Request) {
             ? `${term.orders} orders from ${term.clicks} clicks with ${Math.round(
                 term.acos * 1000,
               ) / 10}% ACoS.`
-            : `${term.clicks} clicks and ₹${Math.round(
+            : `${term.clicks} clicks and â‚¹${Math.round(
                 term.spend,
               )} spend with 0 orders.`;
 

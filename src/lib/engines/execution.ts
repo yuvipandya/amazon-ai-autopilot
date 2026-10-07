@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getAmazonConnector } from "@/lib/amazon/connector-factory";
 import { validateRecommendation } from "./validation";
 import { authorizeExecution } from "./authorization";
+import type { ApprovalSource, ExecutionState } from "@/lib/amazon/types";
 
 export type ExecuteInput = {
   recommendationId: string;

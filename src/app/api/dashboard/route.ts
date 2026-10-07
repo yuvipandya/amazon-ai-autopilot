@@ -1,11 +1,27 @@
 import { NextResponse } from "next/server";
 import { getDashboardMetrics } from "@/lib/analytics";
+import { requireAuth, getAuthorizedAccount } from "@/lib/auth/authorization";
 
 export async function GET(request: Request) {
   try {
+    const session = await requireAuth();
+
     const { searchParams } = new URL(request.url);
     const amazonAccountId = searchParams.get("amazonAccountId") || searchParams.get("accountId") || undefined;
-    const organizationId = searchParams.get("organizationId") || undefined;
+    const requestedOrganizationId = searchParams.get("organizationId");
+
+    if (requestedOrganizationId && requestedOrganizationId !== session.user.organizationId) {
+      return NextResponse.json({ success: false, error: "Forbidden." }, { status: 403 });
+    }
+
+    if (amazonAccountId) {
+      const account = await getAuthorizedAccount(amazonAccountId);
+      if (!account) {
+        return NextResponse.json({ success: false, error: "Account not found." }, { status: 404 });
+      }
+    }
+
+    const organizationId = session.user.organizationId;
 
     const data = await getDashboardMetrics({
       amazonAccountId,

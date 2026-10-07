@@ -1,7 +1,22 @@
 import { NextResponse } from "next/server";
 import { withRetry } from "@/lib/engines/retry";
+import { requireAuth } from "@/lib/auth/authorization";
 
 export async function POST() {
+  try {
+    await requireAuth();
+  } catch {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Authentication required.",
+      },
+      {
+        status: 401,
+      }
+    );
+  }
+
   let failures = 0;
 
   const result = await withRetry(

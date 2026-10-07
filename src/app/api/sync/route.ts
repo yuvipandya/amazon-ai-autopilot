@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 import { IngestionService } from "@/lib/services/ingestion.service";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, getAuthorizedAccount } from "@/lib/auth/authorization";
 
 export async function POST(request: Request) {
   try {
+    const session = await requireAuth();
+
     const body = await request.json().catch(() => ({}));
     let amazonAccountId = body?.amazonAccountId;
 
     if (!amazonAccountId) {
       const active = await prisma.amazonAccount.findFirst({
-        where: { status: "ACTIVE" },
+        where: {
+          status: "ACTIVE",
+          organizationId: session.user.organizationId,
+        },
       });
       amazonAccountId = active?.id;
     }

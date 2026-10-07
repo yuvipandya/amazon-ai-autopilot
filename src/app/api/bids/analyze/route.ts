@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, getAuthorizedProduct } from "@/lib/auth/authorization";
 import { generateBidRecommendation } from "@/lib/ai/gemini";
 import { evaluateInventoryPpc } from "@/lib/engines/bi";
 
 export async function POST(request: Request) {
   try {
+    await requireAuth();
+
     const body = await request.json();
 
     const productId = body?.productId as string | undefined;
@@ -16,17 +19,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-      include: {
-        amazonAccount: true,
-        campaigns: {
-          include: {
-            keywords: true,
-          },
-        },
-      },
-    });
+    const product = await getAuthorizedProduct(productId);
 
     if (!product) {
       return NextResponse.json(

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { requireAuth, getAuthorizedRecommendation } from "@/lib/auth/authorization";
 import {
   runAutopilotAction,
 } from "@/lib/engines/autopilot";
@@ -20,7 +20,25 @@ export async function POST(
   try {
     const { id } = await params;
 
-    const body = await request.json();
+
+    await requireAuth();
+
+    const authorizedRecommendation =
+      await getAuthorizedRecommendation(id);
+
+    if (!authorizedRecommendation) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Recommendation not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+const body = await request.json();
 
     const action = String(
       body.action ?? ""
@@ -53,37 +71,7 @@ export async function POST(
      * EXECUTE is blocked before the autopilot engine is called.
      */
     if (action === "EXECUTE") {
-      const recommendation =
-        await prisma.recommendation.findUnique({
-          where: {
-            id,
-          },
-          select: {
-            amazonAccount: {
-              select: {
-                automationPaused: true,
-              },
-            },
-          },
-        });
-
-      if (!recommendation) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Recommendation not found.",
-          },
-          {
-            status: 404,
-          }
-        );
-      }
-
-      if (
-        recommendation.amazonAccount
-          .automationPaused
-      ) {
+      if (authorizedRecommendation.amazonAccount.automationPaused) {
         return NextResponse.json(
           {
             success: false,
@@ -97,7 +85,7 @@ export async function POST(
       }
     }
 
-	if (action === "ROLLBACK") {
+    if (action === "ROLLBACK") {
   const result =
     await rollbackRecommendation({
       recommendationId: id,
@@ -105,7 +93,7 @@ export async function POST(
 
   return NextResponse.json(result);
 }
-	
+
     const result =
       await runAutopilotAction(
         id,

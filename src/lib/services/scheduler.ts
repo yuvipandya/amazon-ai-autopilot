@@ -141,6 +141,7 @@ export class SchedulerWorkerService {
                   changePercent: 8,
                   expectedImpact: "Capture more high intent conversion traffic.",
                   confidence: 0.88,
+                  risk: "LOW",
                   status: "PENDING",
                   approvalStatus: "PENDING",
                   requiresApproval: account.automationLevel < 3,

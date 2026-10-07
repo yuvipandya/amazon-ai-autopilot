@@ -1,21 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, getAuthorizedAccount } from "@/lib/auth/authorization";
 
 export async function GET(request: Request) {
   try {
+    await requireAuth();
+
     const { searchParams } = new URL(request.url);
     const amazonAccountId = searchParams.get("amazonAccountId") || searchParams.get("accountId");
 
     let account = null;
     if (amazonAccountId) {
-      account = await prisma.amazonAccount.findUnique({
-        where: { id: amazonAccountId },
-      });
+      account = await getAuthorizedAccount(amazonAccountId);
     }
 
     if (!account) {
+      const session = await requireAuth();
       account = await prisma.amazonAccount.findFirst({
-        where: { status: "ACTIVE" },
+        where: {
+          status: "ACTIVE",
+          organizationId: session.user.organizationId,
+        },
       });
     }
 
