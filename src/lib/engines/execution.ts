@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+﻿import { prisma } from "@/lib/prisma";
 import { getAmazonConnector } from "@/lib/amazon/connector-factory";
 import { validateRecommendation } from "./validation";
 import { authorizeExecution } from "./authorization";
@@ -74,7 +74,7 @@ export async function executeRecommendation(
 
   const account = recommendation.amazonAccount;
 
-  // 2. Authorize via Single Server-Side Authorization Boundary
+  // 3. Authorize via Single Server-Side Authorization Boundary
   const auth = await authorizeExecution({
     organizationId: account.organizationId,
     amazonAccountId: account.id,
@@ -87,18 +87,27 @@ export async function executeRecommendation(
     currentValue: recommendation.currentValue,
     recommendedValue: recommendation.recommendedValue,
     changePercent: recommendation.changePercent,
-    entityType: recommendation.keywordId ? "keyword" : recommendation.campaignId ? "campaign" : undefined,
-    entityId: recommendation.keywordId ?? recommendation.campaignId ?? undefined,
+    entityType: recommendation.keywordId
+      ? "keyword"
+      : recommendation.campaignId
+        ? "campaign"
+        : undefined,
+    entityId:
+      recommendation.keywordId ??
+      recommendation.campaignId ??
+      undefined,
   });
 
   if (!auth.authorized) {
-    throw new Error(`Authorization boundary rejected execution: ${auth.reason}`);
+    throw new Error(
+      `Authorization boundary rejected execution: ${auth.reason}`
+    );
   }
 
-  // 3. Obtain connector (Real or Mock)
+  // 4. Obtain connector (Real or Mock)
   const { connector, mode } = getAmazonConnector(account);
 
-  // 4. Mark state as SUBMITTED before initiating write
+  // 5. Mark state as SUBMITTED before initiating write
   await prisma.recommendation.update({
     where: { id: recommendation.id },
     data: {
@@ -116,7 +125,8 @@ export async function executeRecommendation(
   let amazonRequestId = "";
   let writeMessage = "";
 
-  const effectiveProfileId = account.profileId || "default-profile";
+  const effectiveProfileId =
+    account.profileId || "default-profile";
 
   try {
     // ----------------------------------------------------
@@ -129,6 +139,7 @@ export async function executeRecommendation(
       if (!recommendation.keyword) {
         throw new Error("Target keyword not found.");
       }
+
       if (recommendation.recommendedValue === null) {
         throw new Error("Recommended bid is missing.");
       }
@@ -146,25 +157,32 @@ export async function executeRecommendation(
         campaignId: recommendation.keyword.campaignId,
       };
 
-      // Execute write through Amazon Connector
-      const writeRes = await connector.updateKeywordBid(effectiveProfileId, {
-        keywordId: recommendation.keyword.amazonKeywordId || recommendation.keyword.id,
-        newBid: newValue,
-        previousBid: previousValue,
-      });
+      const writeRes = await connector.updateKeywordBid(
+        effectiveProfileId,
+        {
+          keywordId:
+            recommendation.keyword.amazonKeywordId ||
+            recommendation.keyword.id,
+          newBid: newValue,
+          previousBid: previousValue,
+        }
+      );
 
       amazonRequestId = writeRes.metadata.requestId;
 
       if (!writeRes.success) {
-        throw new Error(`Amazon write failed: ${writeRes.error}`);
+        throw new Error(
+          `Amazon write failed: ${writeRes.error}`
+        );
       }
 
-      // POST-WRITE READ-BACK VERIFICATION
-      const verification = await connector.verifyKeywordBid(
-        effectiveProfileId,
-        recommendation.keyword.amazonKeywordId || recommendation.keyword.id,
-        newValue
-      );
+      const verification =
+        await connector.verifyKeywordBid(
+          effectiveProfileId,
+          recommendation.keyword.amazonKeywordId ||
+            recommendation.keyword.id,
+          newValue
+        );
 
       if (!verification.verified) {
         throw new Error(
@@ -180,7 +198,8 @@ export async function executeRecommendation(
       afterSnapshot = {
         ...beforeSnapshot,
         bid: newValue,
-        verifiedAmazonValue: verification.actualAmazonValue,
+        verifiedAmazonValue:
+          verification.actualAmazonValue,
       };
     }
 
@@ -194,6 +213,7 @@ export async function executeRecommendation(
       if (!recommendation.campaign) {
         throw new Error("Target campaign not found.");
       }
+
       if (recommendation.recommendedValue === null) {
         throw new Error("Recommended budget is missing.");
       }
@@ -209,23 +229,33 @@ export async function executeRecommendation(
         dailyBudget: previousValue,
       };
 
-      const writeRes = await connector.updateCampaignBudget(effectiveProfileId, {
-        campaignId: recommendation.campaign.amazonCampaignId || recommendation.campaign.id,
-        newBudget: newValue,
-        previousBudget: previousValue,
-      });
+      const writeRes =
+        await connector.updateCampaignBudget(
+          effectiveProfileId,
+          {
+            campaignId:
+              recommendation.campaign.amazonCampaignId ||
+              recommendation.campaign.id,
+            newBudget: newValue,
+            previousBudget: previousValue,
+          }
+        );
 
       amazonRequestId = writeRes.metadata.requestId;
 
       if (!writeRes.success) {
-        throw new Error(`Amazon write failed: ${writeRes.error}`);
+        throw new Error(
+          `Amazon write failed: ${writeRes.error}`
+        );
       }
 
-      const verification = await connector.verifyCampaignBudget(
-        effectiveProfileId,
-        recommendation.campaign.amazonCampaignId || recommendation.campaign.id,
-        newValue
-      );
+      const verification =
+        await connector.verifyCampaignBudget(
+          effectiveProfileId,
+          recommendation.campaign.amazonCampaignId ||
+            recommendation.campaign.id,
+          newValue
+        );
 
       if (!verification.verified) {
         throw new Error(
@@ -241,16 +271,25 @@ export async function executeRecommendation(
       afterSnapshot = {
         ...beforeSnapshot,
         dailyBudget: newValue,
-        verifiedAmazonValue: verification.actualAmazonValue,
+        verifiedAmazonValue:
+          verification.actualAmazonValue,
       };
     }
 
     // ----------------------------------------------------
     // ADD NEGATIVE KEYWORD
     // ----------------------------------------------------
-    else if (recommendation.actionType === "ADD_NEGATIVE_KEYWORD") {
-      if (!recommendation.searchTerm || !recommendation.campaign) {
-        throw new Error("Target search term or campaign not found.");
+    else if (
+      recommendation.actionType ===
+      "ADD_NEGATIVE_KEYWORD"
+    ) {
+      if (
+        !recommendation.searchTerm ||
+        !recommendation.campaign
+      ) {
+        throw new Error(
+          "Target search term or campaign not found."
+        );
       }
 
       entityType = "search_term";
@@ -259,19 +298,29 @@ export async function executeRecommendation(
       beforeSnapshot = {
         searchTermId: recommendation.searchTerm.id,
         value: recommendation.searchTerm.value,
-        classification: recommendation.searchTerm.classification,
+        classification:
+          recommendation.searchTerm.classification,
       };
 
-      const writeRes = await connector.createNegativeKeyword(effectiveProfileId, {
-        campaignId: recommendation.campaign.amazonCampaignId || recommendation.campaign.id,
-        keywordText: recommendation.searchTerm.value,
-        matchType: "NEGATIVE_EXACT",
-      });
+      const writeRes =
+        await connector.createNegativeKeyword(
+          effectiveProfileId,
+          {
+            campaignId:
+              recommendation.campaign.amazonCampaignId ||
+              recommendation.campaign.id,
+            keywordText:
+              recommendation.searchTerm.value,
+            matchType: "NEGATIVE_EXACT",
+          }
+        );
 
       amazonRequestId = writeRes.metadata.requestId;
 
       if (!writeRes.success) {
-        throw new Error(`Amazon write failed: ${writeRes.error}`);
+        throw new Error(
+          `Amazon write failed: ${writeRes.error}`
+        );
       }
 
       writeMessage =
@@ -282,102 +331,235 @@ export async function executeRecommendation(
       afterSnapshot = {
         ...beforeSnapshot,
         negativeStatus: "CREATED",
-        amazonKeywordId: writeRes.data?.keywordId,
+        amazonKeywordId:
+          writeRes.data?.keywordId,
       };
     }
 
     // ----------------------------------------------------
     // HARVEST KEYWORD
     // ----------------------------------------------------
-    else if (recommendation.actionType === "HARVEST_KEYWORD") {
-      if (!recommendation.searchTerm || !recommendation.campaign) {
-        throw new Error("Target search term or campaign not found.");
+    else if (
+      recommendation.actionType === "HARVEST_KEYWORD"
+    ) {
+      if (
+        !recommendation.searchTerm ||
+        !recommendation.campaign
+      ) {
+        throw new Error(
+          "Target search term or campaign not found."
+        );
       }
 
       entityType = "search_term";
       entityId = recommendation.searchTerm.id;
-      const suggestedBid = recommendation.recommendedValue ?? 10;
+
+      const suggestedBid =
+        recommendation.recommendedValue ?? 10;
+
       newValue = suggestedBid;
 
+      const amazonCampaignId =
+        recommendation.campaign.amazonCampaignId ||
+        recommendation.campaign.id;
+
       beforeSnapshot = {
-        searchTermId: recommendation.searchTerm.id,
-        value: recommendation.searchTerm.value,
-        classification: recommendation.searchTerm.classification,
+        searchTermId:
+          recommendation.searchTerm.id,
+        value:
+          recommendation.searchTerm.value,
+        classification:
+          recommendation.searchTerm.classification,
+        matchType: "EXACT",
+        proposedBid: suggestedBid,
+        campaignId: amazonCampaignId,
       };
 
-      const writeRes = await connector.createKeyword(effectiveProfileId, {
-        campaignId: recommendation.campaign.amazonCampaignId || recommendation.campaign.id,
-        keywordText: recommendation.searchTerm.value,
-        matchType: "EXACT",
-        bid: suggestedBid,
-      });
+      // Create keyword in Amazon.
+      const writeRes =
+        await connector.createKeyword(
+          effectiveProfileId,
+          {
+            campaignId: amazonCampaignId,
+            keywordText:
+              recommendation.searchTerm.value,
+            matchType: "EXACT",
+            bid: suggestedBid,
+          }
+        );
 
-      amazonRequestId = writeRes.metadata.requestId;
+      // Preserve the CREATE request ID for auditability.
+      amazonRequestId =
+        writeRes.metadata.requestId;
 
       if (!writeRes.success) {
-        throw new Error(`Amazon write failed: ${writeRes.error}`);
+        throw new Error(
+          `Amazon write failed: ${writeRes.error}`
+        );
+      }
+
+      // Amazon must return the created keyword ID.
+      const createdKeywordId =
+        writeRes.data?.keywordId;
+
+      if (!createdKeywordId) {
+        throw new Error(
+          "Amazon keyword creation succeeded but no keyword ID was returned."
+        );
+      }
+
+      // POST-WRITE CREATION VERIFICATION.
+      // Never mark the recommendation successful until
+      // Amazon confirms the keyword exists correctly.
+      const verification =
+        await connector.verifyKeywordCreation(
+          effectiveProfileId,
+          {
+            campaignId: amazonCampaignId,
+            keywordId: createdKeywordId,
+            keywordText:
+              recommendation.searchTerm.value,
+            matchType: "EXACT",
+            expectedBid: suggestedBid,
+          }
+        );
+
+      if (!verification.verified) {
+        throw new Error(
+          `Amazon keyword creation verification failed: ${verification.message}`
+        );
       }
 
       writeMessage =
         mode === "REAL"
-          ? `Amazon Ads API harvested "${recommendation.searchTerm.value}" as exact keyword at ₹${suggestedBid} (Req: ${amazonRequestId}).`
-          : `Mock Amazon Ads API harvested "${recommendation.searchTerm.value}" into campaign as exact keyword (MockReq: ${amazonRequestId}).`;
+          ? `Amazon Ads API created and verified "${recommendation.searchTerm.value}" as an exact keyword at ₹${suggestedBid.toFixed(2)} (Req: ${amazonRequestId}).`
+          : `Mock Amazon Ads API created and verified "${recommendation.searchTerm.value}" as an exact keyword at ₹${suggestedBid.toFixed(2)} (MockReq: ${amazonRequestId}).`;
 
       afterSnapshot = {
         ...beforeSnapshot,
         harvestedBid: suggestedBid,
-        amazonKeywordId: writeRes.data?.keywordId,
+        amazonKeywordId: createdKeywordId,
+        verification: {
+          verified: true,
+          actualAmazonValue:
+            verification.actualAmazonValue,
+          verifiedAt: verification.verifiedAt,
+        },
       };
     } else {
-      throw new Error(`Unsupported action: ${recommendation.actionType}`);
+      throw new Error(
+        `Unsupported action: ${recommendation.actionType}`
+      );
     }
 
-    // 5. Database State Synchronization in Transaction after Verified Success
+    // 6. Database State Synchronization in Transaction
+    // after verified success.
     const verifiedTimestamp = new Date();
 
     return await prisma.$transaction(async (tx) => {
-      // Update local entity if applicable
-      if (entityType === "keyword" && newValue !== null) {
+      // Update local keyword bid.
+      if (
+        entityType === "keyword" &&
+        newValue !== null
+      ) {
         await tx.keyword.update({
-          where: { id: recommendation.keyword!.id },
-          data: { bid: newValue },
+          where: {
+            id: recommendation.keyword!.id,
+          },
+          data: {
+            bid: newValue,
+          },
         });
-      } else if (entityType === "campaign" && newValue !== null) {
+      }
+
+      // Update local campaign budget.
+      else if (
+        entityType === "campaign" &&
+        newValue !== null
+      ) {
         await tx.campaign.update({
-          where: { id: recommendation.campaign!.id },
-          data: { dailyBudget: newValue },
+          where: {
+            id: recommendation.campaign!.id,
+          },
+          data: {
+            dailyBudget: newValue,
+          },
         });
-      } else if (recommendation.actionType === "ADD_NEGATIVE_KEYWORD") {
+      }
+
+      // Persist negative keyword.
+      else if (
+        recommendation.actionType ===
+        "ADD_NEGATIVE_KEYWORD"
+      ) {
         await tx.keyword.upsert({
           where: {
             campaignId_value_matchType: {
-              campaignId: recommendation.campaign!.id,
-              value: recommendation.searchTerm!.value,
+              campaignId:
+                recommendation.campaign!.id,
+              value:
+                recommendation.searchTerm!.value,
               matchType: "NEGATIVE_EXACT",
             },
           },
-          update: { status: "NEGATIVE" },
+          update: {
+            status: "NEGATIVE",
+          },
           create: {
-            campaignId: recommendation.campaign!.id,
-            value: recommendation.searchTerm!.value,
+            campaignId:
+              recommendation.campaign!.id,
+            amazonKeywordId:
+              afterSnapshot.amazonKeywordId as
+                | string
+                | undefined,
+            value:
+              recommendation.searchTerm!.value,
             matchType: "NEGATIVE_EXACT",
             bid: 0,
             status: "NEGATIVE",
           },
         });
-      } else if (recommendation.actionType === "HARVEST_KEYWORD" && newValue !== null) {
+      }
+
+      // Persist harvested keyword + Amazon keyword ID.
+      else if (
+        recommendation.actionType ===
+          "HARVEST_KEYWORD" &&
+        newValue !== null
+      ) {
+        const amazonKeywordId =
+          afterSnapshot.amazonKeywordId;
+
+        if (
+          typeof amazonKeywordId !== "string" ||
+          amazonKeywordId.length === 0
+        ) {
+          throw new Error(
+            "Verified harvested keyword is missing its Amazon keyword ID."
+          );
+        }
+
         await tx.keyword.upsert({
           where: {
             campaignId_value_matchType: {
-              campaignId: recommendation.campaign!.id,
-              value: recommendation.searchTerm!.value,
+              campaignId:
+                recommendation.campaign!.id,
+              value:
+                recommendation.searchTerm!.value,
               matchType: "EXACT",
             },
           },
-          update: { status: "ACTIVE", bid: newValue },
+          update: {
+            amazonKeywordId,
+            status: "ACTIVE",
+            bid: newValue,
+          },
           create: {
-            campaignId: recommendation.campaign!.id,
-            value: recommendation.searchTerm!.value,
+            campaignId:
+              recommendation.campaign!.id,
+            amazonKeywordId,
+            value:
+              recommendation.searchTerm!.value,
             matchType: "EXACT",
             bid: newValue,
             status: "ACTIVE",
@@ -385,81 +567,120 @@ export async function executeRecommendation(
         });
       }
 
-      // Mark recommendation as VERIFIED_SUCCESS
+      // Mark recommendation VERIFIED_SUCCESS.
       await tx.recommendation.update({
-        where: { id: recommendation.id },
+        where: {
+          id: recommendation.id,
+        },
         data: {
           status: "EXECUTED",
           executionState: "VERIFIED_SUCCESS",
           approvalStatus: "APPROVED",
           approvalSource,
-          approvalActor: input.actor || (approvalSource === "HUMAN_APPROVAL" ? "seller" : "autopilot"),
+          approvalActor:
+            input.actor ||
+            (approvalSource === "HUMAN_APPROVAL"
+              ? "seller"
+              : "autopilot"),
           approvalTimestamp: verifiedTimestamp,
           executedAt: verifiedTimestamp,
           verifiedAt: verifiedTimestamp,
           amazonRequestId,
           connectorMode: mode,
-          beforeSnapshot: JSON.stringify(beforeSnapshot),
-          afterSnapshot: JSON.stringify(afterSnapshot),
+          beforeSnapshot:
+            JSON.stringify(beforeSnapshot),
+          afterSnapshot:
+            JSON.stringify(afterSnapshot),
         },
       });
 
-      // Audit Log with full traceability
+      // Audit Log with full traceability.
       await tx.auditLog.create({
         data: {
-          amazonAccountId: recommendation.amazonAccountId,
-          recommendationId: recommendation.id,
+          amazonAccountId:
+            recommendation.amazonAccountId,
+          recommendationId:
+            recommendation.id,
           entityType,
           entityId,
-          action: recommendation.actionType,
-          previousValue: previousValue !== null ? String(previousValue) : null,
-          newValue: newValue !== null ? String(newValue) : null,
-          reason: recommendation.reason,
-          aiModel: "deterministic-engine-v2",
-          promptVersion: "not-applicable",
-          strategyVersion: mode === "REAL" ? "production-v1" : "demo-v1",
-          confidence: recommendation.confidence,
-          approvalStatus: "APPROVED",
-          executionResult: "SUCCESS",
+          action:
+            recommendation.actionType,
+          previousValue:
+            previousValue !== null
+              ? String(previousValue)
+              : null,
+          newValue:
+            newValue !== null
+              ? String(newValue)
+              : null,
+          reason:
+            recommendation.reason,
+          aiModel:
+            "deterministic-engine-v2",
+          promptVersion:
+            "not-applicable",
+          strategyVersion:
+            mode === "REAL"
+              ? "production-v1"
+              : "demo-v1",
+          confidence:
+            recommendation.confidence,
+          approvalStatus:
+            "APPROVED",
+          executionResult:
+            "SUCCESS",
           amazonRequestId,
           connectorMode: mode,
-          rawResponse: JSON.stringify({
-            connector: mode === "REAL" ? "RealAmazonConnector" : "MockAmazonConnector",
-            mode,
-            requestId: amazonRequestId,
-            verified: true,
-            message: writeMessage,
-          }),
+          rawResponse:
+            JSON.stringify({
+              connector:
+                mode === "REAL"
+                  ? "RealAmazonConnector"
+                  : "MockAmazonConnector",
+              mode,
+              requestId:
+                amazonRequestId,
+              verified: true,
+              message: writeMessage,
+            }),
           rollbackInfo:
             previousValue !== null
               ? JSON.stringify({
                   available: true,
                   previousValue,
-                  snapshot: beforeSnapshot,
+                  snapshot:
+                    beforeSnapshot,
                   connectorMode: mode,
                 })
-              : JSON.stringify({ available: false }),
+              : JSON.stringify({
+                  available: false,
+                }),
         },
       });
 
       return {
         success: true,
-        action: recommendation.actionType,
+        action:
+          recommendation.actionType,
         entityType,
         entityId,
-        executionState: "VERIFIED_SUCCESS",
+        executionState:
+          "VERIFIED_SUCCESS",
         connectorMode: mode,
         amazonRequestId,
         previousValue,
         newValue,
         message: writeMessage,
-        verifiedAt: verifiedTimestamp.toISOString(),
+        verifiedAt:
+          verifiedTimestamp.toISOString(),
       };
     });
   } catch (err: any) {
-    // Record failure in state machine
+    // Record failure in state machine.
     await prisma.recommendation.update({
-      where: { id: recommendation.id },
+      where: {
+        id: recommendation.id,
+      },
       data: {
         executionState: "FAILED",
         executionError: err.message,

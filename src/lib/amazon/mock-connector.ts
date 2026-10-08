@@ -14,6 +14,15 @@ export class MockAmazonConnector implements IAmazonConnector {
 
   // In-memory simulation state for read-back verification in demo mode
   private keywordBids = new Map<string, number>();
+  private createdKeywords = new Map<
+    string,
+    {
+      campaignId: string;
+      keywordText: string;
+      matchType: "EXACT" | "PHRASE" | "BROAD";
+      bid: number;
+    }
+  >();
   private campaignBudgets = new Map<string, number>();
 
   private generateMockRequestId(): string {
@@ -241,6 +250,13 @@ export class MockAmazonConnector implements IAmazonConnector {
   ): Promise<AmazonWriteResponse<{ keywordId: string; keywordText: string; bid: number }>> {
     const keywordId = `mock-harvest-kw-${Math.random().toString(36).substring(2, 8)}`;
     this.keywordBids.set(keywordId, params.bid);
+
+    this.createdKeywords.set(keywordId, {
+      campaignId: params.campaignId,
+      keywordText: params.keywordText,
+      matchType: params.matchType,
+      bid: params.bid,
+    });
     const requestId = this.generateMockRequestId();
 
     return {
@@ -263,6 +279,79 @@ export class MockAmazonConnector implements IAmazonConnector {
    * Post-write verification in DEMO mode:
    * Simulates real Amazon read-back verification against the simulated Amazon memory state.
    */
+    async verifyKeywordCreation(
+    _profileId: string,
+    params: {
+      campaignId: string;
+      keywordId: string;
+      keywordText: string;
+      matchType: "EXACT" | "PHRASE" | "BROAD";
+      expectedBid: number;
+    }
+  ): Promise<AmazonVerificationResult> {
+    const created = this.createdKeywords.get(params.keywordId);
+
+    if (!created) {
+      return {
+        verified: false,
+        connectorMode: "DEMO",
+        entityType: "keyword_creation",
+        entityId: params.keywordId,
+        expectedValue: params.expectedBid,
+        actualAmazonValue: -1,
+        verifiedAt: new Date().toISOString(),
+        metadata: {
+          requestId: this.generateMockRequestId(),
+          timestamp: new Date().toISOString(),
+          endpoint: `/sp/keywords/${params.keywordId}`,
+          method: "GET",
+          statusCode: 404,
+          latencyMs: 85,
+        },
+        message: "[DEMO FAILED] Created keyword was not found.",
+      };
+    }
+
+    const campaignMatches =
+      created.campaignId === params.campaignId;
+
+    const textMatches =
+      created.keywordText.trim().toLowerCase() ===
+      params.keywordText.trim().toLowerCase();
+
+    const matchTypeMatches =
+      created.matchType === params.matchType;
+
+    const bidMatches =
+      Math.abs(created.bid - params.expectedBid) < 0.001;
+
+    const verified =
+      campaignMatches &&
+      textMatches &&
+      matchTypeMatches &&
+      bidMatches;
+
+    return {
+      verified,
+      connectorMode: "DEMO",
+      entityType: "keyword_creation",
+      entityId: params.keywordId,
+      expectedValue: params.expectedBid,
+      actualAmazonValue: created.bid,
+      verifiedAt: new Date().toISOString(),
+      metadata: {
+        requestId: this.generateMockRequestId(),
+        timestamp: new Date().toISOString(),
+        endpoint: `/sp/keywords/${params.keywordId}`,
+        method: "GET",
+        statusCode: 200,
+        latencyMs: 85,
+      },
+      message: verified
+        ? `[DEMO VERIFIED] Keyword "${created.keywordText}" was created correctly as ${created.matchType} at ₹${created.bid.toFixed(2)}.`
+        : "[DEMO FAILED] Created keyword does not match expected values.",
+    };
+  }
   async verifyKeywordBid(
     _profileId: string,
     keywordId: string,

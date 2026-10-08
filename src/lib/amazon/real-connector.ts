@@ -321,6 +321,63 @@ export class RealAmazonConnector implements IAmazonConnector {
    * Real post-write read-back verification:
    * Reads the current keyword value from Amazon's API to confirm it matches expected value.
    */
+  async verifyKeywordCreation(
+    profileId: string,
+    params: {
+      campaignId: string;
+      keywordId: string;
+      keywordText: string;
+      matchType: "EXACT" | "PHRASE" | "BROAD";
+      expectedBid: number;
+    }
+  ): Promise<AmazonVerificationResult> {
+    const { data, metadata } = await this.makeRequest<any>(
+      `/sp/keywords/${params.keywordId}`,
+      {
+        method: "GET",
+        profileId,
+      }
+    );
+
+    const actualCampaignId = String(data?.campaignId ?? "");
+    const actualKeywordText = String(data?.keywordText ?? "");
+    const actualMatchType = String(data?.matchType ?? "").toUpperCase();
+    const actualBid = Number(data?.bid ?? -1);
+
+    const campaignMatches =
+      actualCampaignId === params.campaignId;
+
+    const textMatches =
+      actualKeywordText.trim().toLowerCase() ===
+      params.keywordText.trim().toLowerCase();
+
+    const matchTypeMatches =
+      actualMatchType === params.matchType;
+
+    const bidMatches =
+      Math.abs(actualBid - params.expectedBid) < 0.001;
+
+    const verified =
+      campaignMatches &&
+      textMatches &&
+      matchTypeMatches &&
+      bidMatches;
+
+    return {
+      verified,
+      connectorMode: "REAL",
+      entityType: "keyword_creation",
+      entityId: params.keywordId,
+      expectedValue: params.expectedBid,
+      actualAmazonValue: actualBid,
+      verifiedAt: new Date().toISOString(),
+      metadata,
+      message: verified
+        ? `Amazon confirmed keyword "${actualKeywordText}" was created in the expected campaign as ${actualMatchType} at ₹${actualBid.toFixed(2)}.`
+        : `Amazon keyword creation verification failed: campaign=${campaignMatches}, text=${textMatches}, matchType=${matchTypeMatches}, bid=${bidMatches}.`,
+    };
+  } 
+
   async verifyKeywordBid(
     profileId: string,
     keywordId: string,

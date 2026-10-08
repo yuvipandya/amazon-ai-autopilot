@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+﻿import { prisma } from "@/lib/prisma";
 import {
   generateSearchTermRecommendation,
   SearchTermRecommendation,
@@ -11,6 +11,8 @@ export interface PersistedSearchTermRecommendation {
   value: string;
   actionType: SearchTermRecommendation["actionType"];
   classification: SearchTermClassification;
+  matchType?: "EXACT" | "PHRASE" | "BROAD";
+  recommendedBid?: number;
 }
 
 function buildIdempotencyKey(
@@ -20,6 +22,34 @@ function buildIdempotencyKey(
   actionType: string
 ) {
   return `search-term:${amazonAccountId}:${searchTermId}:${classification}:${actionType}`;
+}
+
+function calculateMedian(values: number[]): number | null {
+  const valid = values
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+
+  if (valid.length === 0) {
+    return null;
+  }
+
+  const middle = Math.floor(valid.length / 2);
+
+  if (valid.length % 2 === 0) {
+    return (valid[middle - 1] + valid[middle]) / 2;
+  }
+
+  return valid[middle];
+}
+
+function calculateHarvestBid(activeBids: number[]): number {
+  const medianBid = calculateMedian(activeBids);
+
+  if (medianBid === null) {
+    return 1;
+  }
+
+  return Number(Math.max(0.5, medianBid).toFixed(2));
 }
 
 export class SearchTermRecommendationService {
@@ -68,6 +98,20 @@ export class SearchTermRecommendationService {
         spend: true,
         sales: true,
         acos: true,
+        campaign: {
+          select: {
+            keywords: {
+              where: {
+                status: "ACTIVE",
+              },
+              select: {
+                value: true,
+                matchType: true,
+                bid: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -87,6 +131,56 @@ export class SearchTermRecommendationService {
       if (!recommendation) {
         continue;
       }
+
+      const isHarvest =
+        recommendation.actionType === "HARVEST_KEYWORD";
+
+      const isNegative =
+        recommendation.actionType === "ADD_NEGATIVE_KEYWORD";
+
+      const matchType = isHarvest ? "EXACT" : undefined;
+
+      const normalizedSearchTerm = term.value.trim().toLowerCase();
+
+      const exactKeyword = term.campaign.keywords.find(
+        (keyword) =>
+          keyword.matchType.toUpperCase() === "EXACT" &&
+          keyword.value.trim().toLowerCase() ===
+            normalizedSearchTerm
+      );
+
+      const existingKeywordCoverage =
+        term.campaign.keywords.find(
+          (keyword) =>
+            keyword.value.trim().toLowerCase() ===
+              normalizedSearchTerm &&
+            keyword.matchType.toUpperCase() !== "EXACT"
+        );
+
+      /*
+       * Never recommend harvesting a search term that already exists
+       * as an EXACT keyword.
+       */
+      if (isHarvest && exactKeyword) {
+        continue;
+      }
+
+      /*
+       * If the term is already covered by PHRASE/BROAD targeting,
+       * don't blindly create another target. The existing targeting
+       * may already be capturing the demand.
+       */
+      if (isHarvest && existingKeywordCoverage) {
+        continue;
+      }
+
+      const recommendedBid = isHarvest
+        ? calculateHarvestBid(
+            term.campaign.keywords.map(
+              (keyword) => keyword.bid
+            )
+          )
+        : undefined;
 
       const idempotencyKey = buildIdempotencyKey(
         product.amazonAccountId,
@@ -118,16 +212,39 @@ export class SearchTermRecommendationService {
           );
         }
 
-        if (!existing.productId) {
-          await prisma.recommendation.update({
-            where: {
-              id: existing.id,
-            },
-            data: {
-              productId: product.id,
-            },
-          });
-        }
+        await prisma.recommendation.update({
+          where: {
+            id: existing.id,
+          },
+          data: {
+            productId: product.id,
+            title: isHarvest
+              ? `Harvest keyword: ${term.value}`
+              : `Add negative keyword: ${term.value}`,
+            description: recommendation.reason,
+            reason: recommendation.reason,
+            currentValue: term.acos,
+            recommendedValue: isHarvest
+              ? recommendedBid
+              : null,
+            expectedImpact: isHarvest
+              ? `Promote proven search demand into an EXACT keyword at a starting bid of ₹${recommendedBid?.toFixed(2)} after human approval.`
+              : "Reduce spend on non-converting search traffic.",
+            confidence:
+              recommendation.priority === "HIGH"
+                ? 0.9
+                : recommendation.priority === "MEDIUM"
+                  ? 0.75
+                  : 0.6,
+            risk: isNegative ? "MEDIUM" : "LOW",
+            requiresApproval: true,
+            approvalSource: "HUMAN_APPROVAL",
+            connectorMode:
+              product.amazonAccount.isLiveAccount
+                ? "REAL"
+                : "DEMO",
+          },
+        });
 
         persisted.push({
           recommendationId: existing.id,
@@ -135,7 +252,10 @@ export class SearchTermRecommendationService {
           value: term.value,
           actionType: recommendation.actionType,
           classification: term.classification,
+          matchType,
+          recommendedBid,
         });
+
         continue;
       }
 
@@ -147,39 +267,26 @@ export class SearchTermRecommendationService {
             campaignId: term.campaignId,
             searchTermId: term.id,
             actionType: recommendation.actionType,
-            title:
-              recommendation.actionType === "HARVEST_KEYWORD"
-                ? `Increase bid: ${term.value}`
-                : recommendation.actionType ===
-                    "ADD_NEGATIVE_KEYWORD"
-                  ? `Add negative keyword: ${term.value}`
-                  : `Monitor search term: ${term.value}`,
+            title: isHarvest
+              ? `Harvest keyword: ${term.value}`
+              : `Add negative keyword: ${term.value}`,
             description: recommendation.reason,
             reason: recommendation.reason,
             currentValue: term.acos,
-            recommendedValue:
-              recommendation.actionType === "HARVEST_KEYWORD"
-                ? Math.min(term.acos + 0.05, 1)
-                : undefined,
+            recommendedValue: isHarvest
+              ? recommendedBid
+              : undefined,
             changePercent: undefined,
-            expectedImpact:
-              recommendation.actionType === "HARVEST_KEYWORD"
-                ? "Promote proven search demand into a dedicated keyword after human approval."
-                : recommendation.actionType ===
-                    "ADD_NEGATIVE_KEYWORD"
-                  ? "Reduce spend on non-converting search traffic."
-                  : "Maintain visibility and monitor future performance.",
+            expectedImpact: isHarvest
+              ? `Promote proven search demand into an EXACT keyword at a starting bid of ₹${recommendedBid?.toFixed(2)} after human approval.`
+              : "Reduce spend on non-converting search traffic.",
             confidence:
               recommendation.priority === "HIGH"
                 ? 0.9
                 : recommendation.priority === "MEDIUM"
                   ? 0.75
                   : 0.6,
-            risk:
-              recommendation.actionType ===
-              "ADD_NEGATIVE_KEYWORD"
-                ? "MEDIUM"
-                : "LOW",
+            risk: isNegative ? "MEDIUM" : "LOW",
             status: "PENDING",
             executionState: "PENDING",
             approvalStatus: "PENDING",
@@ -203,6 +310,8 @@ export class SearchTermRecommendationService {
         value: term.value,
         actionType: recommendation.actionType,
         classification: term.classification,
+        matchType,
+        recommendedBid,
       });
     }
 

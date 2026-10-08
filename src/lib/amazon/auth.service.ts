@@ -2,10 +2,9 @@ import { AmazonCredentials, AmazonProfile } from "./types";
 
 interface TokenCacheEntry {
   accessToken: string;
-  expiresAt: number; // Unix timestamp ms
+  expiresAt: number;
 }
 
-// In-memory token cache keyed by clientId
 const tokenCache = new Map<string, TokenCacheEntry>();
 
 export const AMAZON_ENDPOINTS = {
@@ -23,24 +22,42 @@ export const AMAZON_ENDPOINTS = {
 };
 
 export class AmazonAuthService {
-  /**
-   * Diagnostic check for real Amazon credentials.
-   * NEVER prints or logs secret values.
-   */
-  static getCredentialStatus(accountCredentials?: Partial<AmazonCredentials> | null): {
+  static getCredentialStatus(
+    accountCredentials?: Partial<AmazonCredentials> | null
+  ): {
     configured: boolean;
     missingFields: string[];
     region: string;
   } {
-    const clientId = accountCredentials?.clientId || process.env.AMAZON_ADS_CLIENT_ID;
-    const clientSecret = accountCredentials?.clientSecret || process.env.AMAZON_ADS_CLIENT_SECRET;
-    const refreshToken = accountCredentials?.refreshToken || process.env.AMAZON_ADS_REFRESH_TOKEN;
-    const region = accountCredentials?.region || (process.env.AMAZON_ADS_REGION as "na" | "eu" | "fe") || "eu";
+    const clientId =
+      accountCredentials?.clientId || process.env.AMAZON_ADS_CLIENT_ID;
+
+    const clientSecret =
+      accountCredentials?.clientSecret ||
+      process.env.AMAZON_ADS_CLIENT_SECRET;
+
+    const refreshToken =
+      accountCredentials?.refreshToken ||
+      process.env.AMAZON_ADS_REFRESH_TOKEN;
+
+    const region =
+      accountCredentials?.region ||
+      (process.env.AMAZON_ADS_REGION as "na" | "eu" | "fe") ||
+      "eu";
 
     const missingFields: string[] = [];
-    if (!clientId) missingFields.push("clientId (AMAZON_ADS_CLIENT_ID)");
-    if (!clientSecret) missingFields.push("clientSecret (AMAZON_ADS_CLIENT_SECRET)");
-    if (!refreshToken) missingFields.push("refreshToken (AMAZON_ADS_REFRESH_TOKEN)");
+
+    if (!clientId) {
+      missingFields.push("clientId (AMAZON_ADS_CLIENT_ID)");
+    }
+
+    if (!clientSecret) {
+      missingFields.push("clientSecret (AMAZON_ADS_CLIENT_SECRET)");
+    }
+
+    if (!refreshToken) {
+      missingFields.push("refreshToken (AMAZON_ADS_REFRESH_TOKEN)");
+    }
 
     return {
       configured: missingFields.length === 0,
@@ -49,19 +66,30 @@ export class AmazonAuthService {
     };
   }
 
-  /**
-   * Resolves effective credentials for an account or environment.
-   */
   static getEffectiveCredentials(
     accountCredentials?: Partial<AmazonCredentials> | null
   ): AmazonCredentials | null {
-    const clientId = accountCredentials?.clientId || process.env.AMAZON_ADS_CLIENT_ID;
-    const clientSecret = accountCredentials?.clientSecret || process.env.AMAZON_ADS_CLIENT_SECRET;
-    const refreshToken = accountCredentials?.refreshToken || process.env.AMAZON_ADS_REFRESH_TOKEN;
-    const profileId = accountCredentials?.profileId || process.env.AMAZON_ADS_PROFILE_ID;
-    const region = (accountCredentials?.region || process.env.AMAZON_ADS_REGION || "eu") as "na" | "eu" | "fe";
+    const clientId =
+      accountCredentials?.clientId || process.env.AMAZON_ADS_CLIENT_ID;
 
-    if (!clientId || !clientSecret || !refreshToken) {
+    const clientSecret =
+      accountCredentials?.clientSecret ||
+      process.env.AMAZON_ADS_CLIENT_SECRET;
+
+    const refreshToken =
+      accountCredentials?.refreshToken ||
+      process.env.AMAZON_ADS_REFRESH_TOKEN;
+
+    const profileId =
+      accountCredentials?.profileId || process.env.AMAZON_ADS_PROFILE_ID;
+
+    const region = (
+      accountCredentials?.region ||
+      process.env.AMAZON_ADS_REGION ||
+      "eu"
+    ) as "na" | "eu" | "fe";
+
+    if (!clientId || !clientSecret || !refreshToken || !profileId) {
       return null;
     }
 
@@ -74,14 +102,12 @@ export class AmazonAuthService {
     };
   }
 
-  /**
-   * Obtains a valid access token via LWA refresh token grant with in-memory caching.
-   */
-  static async getAccessToken(credentials: AmazonCredentials): Promise<string> {
+  static async getAccessToken(
+    credentials: AmazonCredentials
+  ): Promise<string> {
     const cacheKey = credentials.clientId;
     const cached = tokenCache.get(cacheKey);
 
-    // Reuse cached token if it has more than 5 minutes before expiration
     if (cached && cached.expiresAt > Date.now() + 5 * 60 * 1000) {
       return cached.accessToken;
     }
@@ -96,21 +122,31 @@ export class AmazonAuthService {
     const response = await fetch(AMAZON_ENDPOINTS.tokenUrl, {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "Content-Type":
+          "application/x-www-form-urlencoded;charset=UTF-8",
       },
       body: body.toString(),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
+
       let parsedError = "";
+
       try {
         const errorJson = JSON.parse(errorText);
-        parsedError = errorJson.error_description || errorJson.error || errorText;
+
+        parsedError =
+          errorJson.error_description ||
+          errorJson.error ||
+          errorText;
       } catch {
         parsedError = errorText;
       }
-      throw new Error(`Amazon LWA token exchange failed (${response.status}): ${parsedError}`);
+
+      throw new Error(
+        `Amazon LWA token exchange failed (${response.status}): ${parsedError}`
+      );
     }
 
     const data = await response.json();
@@ -125,10 +161,9 @@ export class AmazonAuthService {
     return accessToken;
   }
 
-  /**
-   * Discovers advertising profiles associated with the LWA credentials.
-   */
-  static async discoverProfiles(credentials: AmazonCredentials): Promise<AmazonProfile[]> {
+  static async discoverProfiles(
+    credentials: AmazonCredentials
+  ): Promise<AmazonProfile[]> {
     const accessToken = await this.getAccessToken(credentials);
     const endpoint = AMAZON_ENDPOINTS.advertising[credentials.region];
 
@@ -143,7 +178,10 @@ export class AmazonAuthService {
 
     if (!response.ok) {
       const err = await response.text();
-      throw new Error(`Amazon Ads profile discovery failed (${response.status}): ${err}`);
+
+      throw new Error(
+        `Amazon Ads profile discovery failed (${response.status}): ${err}`
+      );
     }
 
     return (await response.json()) as AmazonProfile[];

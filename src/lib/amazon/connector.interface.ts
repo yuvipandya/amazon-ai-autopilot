@@ -62,6 +62,17 @@ export interface IAmazonConnector {
     }
   ): Promise<AmazonWriteResponse<{ keywordId: string; keywordText: string; bid: number }>>;
 
+verifyKeywordCreation(
+    profileId: string,
+    params: {
+      campaignId: string;
+      keywordId: string;
+      keywordText: string;
+      matchType: "EXACT" | "PHRASE" | "BROAD";
+      expectedBid: number;
+    }
+  ): Promise<AmazonVerificationResult>;
+
   verifyKeywordBid(
     profileId: string,
     keywordId: string,
