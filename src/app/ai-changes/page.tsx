@@ -313,7 +313,13 @@ export default function AIChangesPage() {
 
   async function runAction(
   recommendation: Recommendation,
-  action: "EXECUTE" | "IGNORE" | "LOCK" | "ROLLBACK"
+  action:
+  | "APPROVE"
+  | "REJECT"
+  | "EXECUTE"
+  | "IGNORE"
+  | "LOCK"
+  | "ROLLBACK"
   ) {
     try {
       setExecuting(true);
@@ -348,6 +354,8 @@ export default function AIChangesPage() {
       setActionResult(json);
 
       if (
+        action === "APPROVE" ||
+        action === "REJECT" ||
         action === "EXECUTE" ||
         action === "IGNORE" ||
         action === "LOCK"
@@ -1986,48 +1994,39 @@ export default function AIChangesPage() {
               </section>
 
               <div className="drawer-actions">
-                <button
+                {selected.status === "PENDING" && (
+                  <>
+                              <button
                   className="drawer-action secondary-button"
-                  onClick={() =>
-                    runAction(
-                      selected,
-                      "IGNORE"
-                    )
-                  }
+                  onClick={() => runAction(selected, "REJECT")}
                   disabled={executing}
                 >
-                  Ignore
-                </button>
-
-                <button
-                  className="drawer-action secondary-button"
-                  onClick={() =>
-                    runAction(
-                      selected,
-                      "LOCK"
-                    )
-                  }
-                  disabled={executing}
-                >
-                  <Lock size={13} />
-                  Lock
+                  <X size={13} />
+                  {executing ? "Processing..." : "Reject"}
                 </button>
 
                 <button
                   className="drawer-action execute-button"
-                  onClick={() =>
-                    runAction(
-                      selected,
-                      "EXECUTE"
-                    )
-                  }
+                  onClick={() => runAction(selected, "APPROVE")}
                   disabled={executing}
                 >
-                  {executing
-                    ? "Executing..."
-                    : "Execute Change"}
+                  <Check size={13} />
+                  {executing ? "Processing..." : "Approve"}
                 </button>
-              </div>
+              </>
+            )}
+
+            {selected.status === "APPROVED" && (
+              <button
+                className="drawer-action execute-button"
+                onClick={() => runAction(selected, "EXECUTE")}
+                disabled={executing}
+              >
+                <Zap size={13} />
+                {executing ? "Executing..." : "Execute Approved Change"}
+              </button>
+            )}
+          </div>
             </div>
           </aside>
         </>

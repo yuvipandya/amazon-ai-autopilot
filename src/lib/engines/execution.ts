@@ -47,8 +47,17 @@ export async function executeRecommendation(
     throw new Error("Recommendation not found.");
   }
 
-  if (recommendation.status !== "PENDING") {
-    throw new Error(`Recommendation is already ${recommendation.status}.`);
+  const statusAllowed =
+    approvalSource === "AUTOPILOT_POLICY"
+      ? recommendation.status === "PENDING"
+      : recommendation.status === "APPROVED";
+
+  if (!statusAllowed) {
+    throw new Error(
+      approvalSource === "AUTOPILOT_POLICY"
+        ? `Autonomous execution requires a PENDING recommendation. Current status: ${recommendation.status}.`
+        : `Human execution requires an APPROVED recommendation. Current status: ${recommendation.status}.`
+    );
   }
 
   // 2. Mandatory deterministic validation boundary.

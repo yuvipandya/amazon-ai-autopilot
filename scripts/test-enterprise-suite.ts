@@ -237,7 +237,9 @@ async function runAllTests() {
         changePercent: 10,
         confidence: 0.9,
         risk: "LOW",
-        status: "PENDING",
+        status: "APPROVED",
+        approvalStatus: "APPROVED",
+        approvalSource: "HUMAN_APPROVAL",
         executionState: "PENDING",
       },
     });
@@ -258,7 +260,9 @@ async function runAllTests() {
         changePercent: 20,
         confidence: 0.99,
         risk: "LOW",
-        status: "PENDING",
+        status: "APPROVED",
+        approvalStatus: "APPROVED",
+        approvalSource: "HUMAN_APPROVAL",
         executionState: "PENDING",
       },
     });
@@ -291,7 +295,7 @@ async function runAllTests() {
     });
 
     assert(
-      unsafeRecAfter?.status === "PENDING",
+      unsafeRecAfter?.status === "APPROVED",
       "Execution Boundary: Rejected recommendation remains PENDING"
     );
 

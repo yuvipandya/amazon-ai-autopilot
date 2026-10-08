@@ -72,22 +72,28 @@ export async function validateRecommendation(
 ): Promise<ValidationResult> {
   const checks: ValidationCheck[] = [];
 
-  checks.push({
-    name: "Recommendation status",
-    passed: recommendation.status === "PENDING",
-    message:
-      recommendation.status === "PENDING"
-        ? "Recommendation is pending execution."
-        : `Recommendation is already ${recommendation.status}.`,
-  });
+  const executableStatus =
+  recommendation.status === "PENDING" ||
+  recommendation.status === "APPROVED";
 
-  if (recommendation.status !== "PENDING") {
-    return {
-      passed: false,
-      checks,
-      reason: "Only pending recommendations can be executed.",
-    };
-  }
+checks.push({
+  name: "Recommendation status",
+  passed: executableStatus,
+  message: executableStatus
+    ? recommendation.status === "APPROVED"
+      ? "Recommendation has explicit human approval."
+      : "Recommendation is pending execution."
+    : `Recommendation is already ${recommendation.status}.`,
+});
+
+if (!executableStatus) {
+  return {
+    passed: false,
+    checks,
+    reason:
+      "Recommendation must be PENDING or APPROVED before validation can continue.",
+  };
+}
 
   if (
     recommendation.actionType === "INCREASE_BID" ||
