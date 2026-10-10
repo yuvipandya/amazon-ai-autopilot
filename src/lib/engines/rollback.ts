@@ -1,8 +1,11 @@
+
 import { prisma } from "@/lib/prisma";
 import { getAmazonConnector } from "@/lib/amazon/connector-factory";
 
 export type RollbackInput = {
   recommendationId: string;
+  organizationId: string;
+  actor?: string;
 };
 
 export type RollbackResult = {
@@ -24,34 +27,40 @@ export async function rollbackRecommendation(
     where: {
       recommendationId: input.recommendationId,
       executionResult: "SUCCESS",
-      NOT: {
-        action: "ROLLBACK",
-      },
+      action: { not: "ROLLBACK" },
+      amazonAccount: { organizationId: input.organizationId },
     },
-    include: {
-      amazonAccount: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
+    include: { amazonAccount: true },
+    orderBy: { createdAt: "desc" },
   });
 
   if (!originalAudit) {
-    throw new Error(
-      "No successful execution with rollback information was found."
-    );
+    throw new Error("No authorized successful execution was found for rollback.");
+  }
+
+  const account = originalAudit.amazonAccount;
+
+  if (account.organizationId !== input.organizationId) {
+    throw new Error("Rollback denied: account organization mismatch.");
+  }
+
+  if (account.status !== "ACTIVE") {
+    throw new Error("Rollback denied: Amazon account is not active.");
+  }
+
+  if (account.automationPaused) {
+    throw new Error("Rollback execution is blocked by the kill switch.");
   }
 
   if (!originalAudit.rollbackInfo) {
-    throw new Error(
-      "This execution does not contain rollback information."
-    );
+    throw new Error("This execution does not contain rollback information.");
   }
 
   let rollbackInfo: {
     available?: boolean;
     previousValue?: number;
     snapshot?: Record<string, unknown>;
+    rollbackOfAuditLogId?: string;
   };
 
   try {
@@ -62,165 +71,204 @@ export async function rollbackRecommendation(
 
   if (
     rollbackInfo.available !== true ||
-    rollbackInfo.previousValue === undefined
+    rollbackInfo.previousValue === undefined ||
+    !Number.isFinite(Number(rollbackInfo.previousValue))
   ) {
     throw new Error("Rollback is not available for this execution.");
   }
 
   const restoredValue = Number(rollbackInfo.previousValue);
+  const entityType = originalAudit.entityType;
+  const entityId = originalAudit.entityId;
 
-  if (!Number.isFinite(restoredValue)) {
-    throw new Error("Rollback value is invalid.");
-  }
+  // Claim the rollback before sending any connector write.
+  // A prior rollback event prevents replay.
+  const alreadyRolledBack = await prisma.auditLog.findFirst({
+    where: {
+      recommendationId: input.recommendationId,
+      action: "ROLLBACK",
+      executionResult: { in: ["SUCCESS", "SUBMITTED"] },
+    },
+    select: { id: true },
+  });
 
-  const account = originalAudit.amazonAccount;
-
-  // Defense-in-depth kill switch.
-  // Rollback is a write operation and must never bypass the account-level
-  // automation pause, even when called directly outside the API route.
-  if (account.automationPaused) {
-    throw new Error(
-      "Automation is paused. Rollback execution is blocked by the kill switch."
-    );
+  if (alreadyRolledBack) {
+    throw new Error("Rollback already exists for this recommendation.");
   }
 
   const { connector, mode } = getAmazonConnector(account);
-  const effectiveProfileId = account.profileId || "default-profile";
+  const profileId = account.profileId || "default-profile";
 
-  let currentValue: number | null = null;
-  const entityType = originalAudit.entityType;
-  const entityId = originalAudit.entityId;
+  let currentValue: number;
   let amazonRequestId = "";
   let rollbackMessage = "";
+  let target: { id: string; accountId: string };
 
-  // 1. Verify entity exists in DB and state hasn't drifted
   if (entityType === "keyword") {
     const keyword = await prisma.keyword.findUnique({
       where: { id: entityId },
+      include: { campaign: true },
     });
 
-    if (!keyword) {
-      throw new Error("Rollback target keyword no longer exists.");
-    }
+    if (!keyword) throw new Error("Rollback target keyword no longer exists.");
 
+    target = {
+      id: keyword.id,
+      accountId: keyword.campaign.amazonAccountId,
+    };
     currentValue = keyword.bid;
 
-    if (
-      originalAudit.newValue !== null &&
-      Math.abs(currentValue - Number(originalAudit.newValue)) > 0.001
-    ) {
-      throw new Error(
-        `Rollback stopped: current keyword bid is ₹${currentValue.toFixed(
-          2
-        )}, but executed value was ₹${Number(originalAudit.newValue).toFixed(
-          2
-        )}. Value has drifted since execution.`
-      );
+    if (target.accountId !== account.id) {
+      throw new Error("Rollback denied: keyword belongs to another account.");
     }
 
-    // Submit rollback write to Amazon Connector
-    const writeRes = await connector.updateKeywordBid(effectiveProfileId, {
+    if (
+      originalAudit.newValue === null ||
+      !Number.isFinite(Number(originalAudit.newValue)) ||
+      Math.abs(currentValue - Number(originalAudit.newValue)) > 0.001
+    ) {
+      throw new Error("Rollback stopped: keyword value has drifted.");
+    }
+
+    // Recheck the kill switch immediately before the connector write.
+    const freshAccount = await prisma.amazonAccount.findUniqueOrThrow({
+      where: { id: account.id },
+    });
+    if (freshAccount.status !== "ACTIVE" || freshAccount.automationPaused) {
+      throw new Error("Rollback blocked: account is inactive or automation is paused.");
+    }
+
+    const claim = await prisma.recommendation.updateMany({
+      where: {
+        id: input.recommendationId,
+        status: "EXECUTED",
+        executionState: "VERIFIED_SUCCESS",
+      },
+      data: { executionState: "SUBMITTED" },
+    });
+
+    if (claim.count !== 1) {
+      throw new Error("Rollback blocked: another operation owns this recommendation, or its execution state has changed.");
+    }
+
+    const write = await connector.updateKeywordBid(profileId, {
       keywordId: keyword.amazonKeywordId || keyword.id,
       newBid: restoredValue,
       previousBid: currentValue,
     });
 
-    amazonRequestId = writeRes.metadata.requestId;
+    amazonRequestId = write.metadata.requestId;
+    if (!write.success) throw new Error(`Rollback write failed: ${write.error}`);
 
-    if (!writeRes.success) {
-      throw new Error(`Amazon rollback write failed: ${writeRes.error}`);
-    }
-
-    // Read Amazon value back (verification)
     const verification = await connector.verifyKeywordBid(
-      effectiveProfileId,
+      profileId,
       keyword.amazonKeywordId || keyword.id,
       restoredValue
     );
 
     if (!verification.verified) {
-      throw new Error(
-        `Amazon post-rollback verification failed: ${verification.message}`
-      );
+      throw new Error(`Rollback verification failed: ${verification.message}`);
     }
 
-    rollbackMessage =
-      mode === "REAL"
-        ? `[LIVE AMAZON ROLLBACK] Verified keyword bid restored to ₹${restoredValue.toFixed(2)} (Req: ${amazonRequestId}).`
-        : `[DEMO ROLLBACK] Mock Amazon verified keyword bid restored to ₹${restoredValue.toFixed(2)} (MockReq: ${amazonRequestId}).`;
+    rollbackMessage = `Verified keyword bid restored to ${restoredValue.toFixed(2)} (${mode}).`;
   } else if (entityType === "campaign") {
     const campaign = await prisma.campaign.findUnique({
       where: { id: entityId },
     });
 
-    if (!campaign) {
-      throw new Error("Rollback target campaign no longer exists.");
-    }
+    if (!campaign) throw new Error("Rollback target campaign no longer exists.");
 
+    target = { id: campaign.id, accountId: campaign.amazonAccountId };
     currentValue = campaign.dailyBudget;
 
-    if (
-      originalAudit.newValue !== null &&
-      Math.abs(currentValue - Number(originalAudit.newValue)) > 0.001
-    ) {
-      throw new Error(
-        `Rollback stopped: current campaign budget is ₹${currentValue.toFixed(
-          2
-        )}, but executed value was ₹${Number(originalAudit.newValue).toFixed(
-          2
-        )}. Value has drifted since execution.`
-      );
+    if (target.accountId !== account.id) {
+      throw new Error("Rollback denied: campaign belongs to another account.");
     }
 
-    const writeRes = await connector.updateCampaignBudget(effectiveProfileId, {
+    if (
+      originalAudit.newValue === null ||
+      !Number.isFinite(Number(originalAudit.newValue)) ||
+      Math.abs(currentValue - Number(originalAudit.newValue)) > 0.001
+    ) {
+      throw new Error("Rollback stopped: campaign budget has drifted.");
+    }
+
+    const freshAccount = await prisma.amazonAccount.findUniqueOrThrow({
+      where: { id: account.id },
+    });
+    if (freshAccount.status !== "ACTIVE" || freshAccount.automationPaused) {
+      throw new Error("Rollback blocked: account is inactive or automation is paused.");
+    }
+
+    const claim = await prisma.recommendation.updateMany({
+      where: {
+        id: input.recommendationId,
+        status: "EXECUTED",
+        executionState: "VERIFIED_SUCCESS",
+      },
+      data: { executionState: "SUBMITTED" },
+    });
+
+    if (claim.count !== 1) {
+      throw new Error("Rollback blocked: another operation owns this recommendation, or its execution state has changed.");
+    }
+
+    const write = await connector.updateCampaignBudget(profileId, {
       campaignId: campaign.amazonCampaignId || campaign.id,
       newBudget: restoredValue,
       previousBudget: currentValue,
     });
 
-    amazonRequestId = writeRes.metadata.requestId;
-
-    if (!writeRes.success) {
-      throw new Error(`Amazon rollback write failed: ${writeRes.error}`);
-    }
+    amazonRequestId = write.metadata.requestId;
+    if (!write.success) throw new Error(`Rollback write failed: ${write.error}`);
 
     const verification = await connector.verifyCampaignBudget(
-      effectiveProfileId,
+      profileId,
       campaign.amazonCampaignId || campaign.id,
       restoredValue
     );
 
     if (!verification.verified) {
-      throw new Error(
-        `Amazon post-rollback verification failed: ${verification.message}`
-      );
+      throw new Error(`Rollback verification failed: ${verification.message}`);
     }
 
-    rollbackMessage =
-      mode === "REAL"
-        ? `[LIVE AMAZON ROLLBACK] Verified daily budget restored to ₹${restoredValue.toFixed(2)} (Req: ${amazonRequestId}).`
-        : `[DEMO ROLLBACK] Mock Amazon verified daily budget restored to ₹${restoredValue.toFixed(2)} (MockReq: ${amazonRequestId}).`;
+    rollbackMessage = `Verified campaign budget restored to ${restoredValue.toFixed(2)} (${mode}).`;
   } else {
-    throw new Error(
-      `Rollback is not yet supported for entity type "${entityType}".`
-    );
+    throw new Error(`Rollback is not supported for entity type "${entityType}".`);
   }
 
-  // 2. Persist verified rollback in Database
+  // Persist local state and audit only after connector verification.
   return prisma.$transaction(async (tx) => {
+    const duplicate = await tx.auditLog.findFirst({
+      where: {
+        recommendationId: input.recommendationId,
+        action: "ROLLBACK",
+        executionResult: { in: ["SUCCESS", "SUBMITTED"] },
+      },
+      select: { id: true },
+    });
+
+    if (duplicate) {
+      throw new Error("Rollback already exists for this recommendation.");
+    }
+
     if (entityType === "keyword") {
       await tx.keyword.update({
         where: { id: entityId },
         data: { bid: restoredValue },
       });
-    } else if (entityType === "campaign") {
+    } else {
       await tx.campaign.update({
         where: { id: entityId },
         data: { dailyBudget: restoredValue },
       });
     }
 
-    // Record audit log for rollback
+    await tx.recommendation.update({
+      where: { id: input.recommendationId },
+      data: { executionState: "VERIFIED_SUCCESS" },
+    });
+
     await tx.auditLog.create({
       data: {
         amazonAccountId: originalAudit.amazonAccountId,
@@ -228,10 +276,10 @@ export async function rollbackRecommendation(
         entityType,
         entityId,
         action: "ROLLBACK",
-        previousValue: currentValue === null ? null : String(currentValue),
+        previousValue: String(currentValue),
         newValue: String(restoredValue),
-        reason: `Rollback of ${originalAudit.action} execution to pre-execution state.`,
-        aiModel: "deterministic-engine-v2",
+        reason: `Verified rollback of ${originalAudit.action}.`,
+        aiModel: "deterministic-engine-v3",
         promptVersion: "not-applicable",
         strategyVersion: mode === "REAL" ? "production-v1" : "demo-v1",
         confidence: originalAudit.confidence,
@@ -240,8 +288,8 @@ export async function rollbackRecommendation(
         amazonRequestId,
         connectorMode: mode,
         rawResponse: JSON.stringify({
-          connector: mode === "REAL" ? "RealAmazonConnector" : "MockAmazonConnector",
           mode,
+          actor: input.actor ?? "unknown",
           rollbackOfAuditLogId: originalAudit.id,
           requestId: amazonRequestId,
           verified: true,
@@ -261,7 +309,7 @@ export async function rollbackRecommendation(
       entityId,
       connectorMode: mode,
       amazonRequestId,
-      previousValue: currentValue as number,
+      previousValue: currentValue,
       restoredValue,
       message: rollbackMessage,
     };

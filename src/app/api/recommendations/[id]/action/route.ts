@@ -159,6 +159,8 @@ export async function POST(
     if (action === "ROLLBACK") {
       const result = await rollbackRecommendation({
         recommendationId: id,
+        organizationId: recommendation.amazonAccount.organizationId,
+        actor: session.user.email ?? session.user.id,
       });
 
       return NextResponse.json(result);

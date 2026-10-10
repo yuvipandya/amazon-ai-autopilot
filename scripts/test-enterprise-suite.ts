@@ -1,4 +1,4 @@
-﻿import { prisma } from "../src/lib/prisma";
+import { prisma } from "../src/lib/prisma";
 import { validateRecommendation } from "../src/lib/engines/validation";
 import { authorizeExecution } from "../src/lib/engines/authorization";
 import { executeRecommendation } from "../src/lib/engines/execution";
@@ -21,10 +21,10 @@ async function runAllTests() {
   function assert(condition: boolean, testName: string, detail?: string) {
     totalTests++;
     if (condition) {
-      console.log(`âœ… [PASS] ${testName}`);
+      console.log(`✅ [PASS] ${testName}`);
       passedTests++;
     } else {
-      console.error(`âŒ [FAIL] ${testName}: ${detail || "Condition not met"}`);
+      console.error(`❌ [FAIL] ${testName}: ${detail || "Condition not met"}`);
     }
   }
 
@@ -339,6 +339,7 @@ async function runAllTests() {
     try {
       await rollbackRecommendation({
         recommendationId: testRec.id,
+        organizationId: account.organizationId,
       });
     } catch (error) {
       pausedRollbackRejected =
@@ -366,8 +367,9 @@ async function runAllTests() {
       data: { automationPaused: false },
     });
     const rollbackResult = await rollbackRecommendation({
-      recommendationId: testRec.id,
-    });
+        recommendationId: testRec.id,
+        organizationId: account.organizationId,
+      });
 
     assert(rollbackResult.success, "Rollback: Rollback completed successfully");
     assert(
@@ -398,7 +400,7 @@ async function runAllTests() {
   });
 
   assert(econ.tacos === 0.2, "BI TACoS: Correctly computed TACoS as 20%");
-  assert(econ.contributionProfit === 25000, "BI Contribution Profit: Accurately calculated â‚¹25,000 profit");
+  assert(econ.contributionProfit === 25000, "BI Contribution Profit: Accurately calculated ₹25,000 profit");
   assert(econ.breakEvenAcos > 0, "BI Break-even: Accurately calculated break-even ACoS");
 
   // Inventory-aware PPC check
@@ -539,4 +541,5 @@ runAllTests()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
 
