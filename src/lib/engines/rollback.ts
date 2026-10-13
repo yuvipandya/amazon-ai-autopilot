@@ -20,10 +20,18 @@ export type RollbackResult = {
   message: string;
 };
 
+export type RollbackDependencies = {
+  db?: typeof prisma;
+  connectorFactory?: typeof getAmazonConnector;
+};
+
 export async function rollbackRecommendation(
-  input: RollbackInput
+  input: RollbackInput,
+  dependencies: RollbackDependencies = {}
 ): Promise<RollbackResult> {
-  const originalAudit = await prisma.auditLog.findFirst({
+  const db = dependencies.db ?? prisma;
+  const connectorFactory = dependencies.connectorFactory ?? getAmazonConnector;
+  const originalAudit = await db.auditLog.findFirst({
     where: {
       recommendationId: input.recommendationId,
       executionResult: "SUCCESS",
@@ -83,11 +91,11 @@ export async function rollbackRecommendation(
 
   // Claim the rollback before sending any connector write.
   // A prior rollback event prevents replay.
-  const alreadyRolledBack = await prisma.auditLog.findFirst({
+  const alreadyRolledBack = await db.auditLog.findFirst({
     where: {
       recommendationId: input.recommendationId,
       action: "ROLLBACK",
-      executionResult: { in: ["SUCCESS", "SUBMITTED"] },
+      executionResult: { in: ["SUCCESS", "SUBMITTED", "UNKNOWN"] },
     },
     select: { id: true },
   });
@@ -96,7 +104,7 @@ export async function rollbackRecommendation(
     throw new Error("Rollback already exists for this recommendation.");
   }
 
-  const { connector, mode } = getAmazonConnector(account);
+  const { connector, mode } = connectorFactory(account);
   const profileId = account.profileId || "default-profile";
 
   let currentValue: number;
@@ -104,8 +112,11 @@ export async function rollbackRecommendation(
   let rollbackMessage = "";
   let target: { id: string; accountId: string };
 
+  let rollbackClaimed = false;
+
+  try {
   if (entityType === "keyword") {
-    const keyword = await prisma.keyword.findUnique({
+    const keyword = await db.keyword.findUnique({
       where: { id: entityId },
       include: { campaign: true },
     });
@@ -131,14 +142,14 @@ export async function rollbackRecommendation(
     }
 
     // Recheck the kill switch immediately before the connector write.
-    const freshAccount = await prisma.amazonAccount.findUniqueOrThrow({
+    const freshAccount = await db.amazonAccount.findUniqueOrThrow({
       where: { id: account.id },
     });
     if (freshAccount.status !== "ACTIVE" || freshAccount.automationPaused) {
       throw new Error("Rollback blocked: account is inactive or automation is paused.");
     }
 
-    const claim = await prisma.recommendation.updateMany({
+    const claim = await db.recommendation.updateMany({
       where: {
         id: input.recommendationId,
         status: "EXECUTED",
@@ -150,6 +161,7 @@ export async function rollbackRecommendation(
     if (claim.count !== 1) {
       throw new Error("Rollback blocked: another operation owns this recommendation, or its execution state has changed.");
     }
+    rollbackClaimed = true;
 
     const write = await connector.updateKeywordBid(profileId, {
       keywordId: keyword.amazonKeywordId || keyword.id,
@@ -172,7 +184,7 @@ export async function rollbackRecommendation(
 
     rollbackMessage = `Verified keyword bid restored to ${restoredValue.toFixed(2)} (${mode}).`;
   } else if (entityType === "campaign") {
-    const campaign = await prisma.campaign.findUnique({
+    const campaign = await db.campaign.findUnique({
       where: { id: entityId },
     });
 
@@ -193,14 +205,14 @@ export async function rollbackRecommendation(
       throw new Error("Rollback stopped: campaign budget has drifted.");
     }
 
-    const freshAccount = await prisma.amazonAccount.findUniqueOrThrow({
+    const freshAccount = await db.amazonAccount.findUniqueOrThrow({
       where: { id: account.id },
     });
     if (freshAccount.status !== "ACTIVE" || freshAccount.automationPaused) {
       throw new Error("Rollback blocked: account is inactive or automation is paused.");
     }
 
-    const claim = await prisma.recommendation.updateMany({
+    const claim = await db.recommendation.updateMany({
       where: {
         id: input.recommendationId,
         status: "EXECUTED",
@@ -212,6 +224,7 @@ export async function rollbackRecommendation(
     if (claim.count !== 1) {
       throw new Error("Rollback blocked: another operation owns this recommendation, or its execution state has changed.");
     }
+    rollbackClaimed = true;
 
     const write = await connector.updateCampaignBudget(profileId, {
       campaignId: campaign.amazonCampaignId || campaign.id,
@@ -238,12 +251,12 @@ export async function rollbackRecommendation(
   }
 
   // Persist local state and audit only after connector verification.
-  return prisma.$transaction(async (tx) => {
+  return await db.$transaction(async (tx) => {
     const duplicate = await tx.auditLog.findFirst({
       where: {
         recommendationId: input.recommendationId,
         action: "ROLLBACK",
-        executionResult: { in: ["SUCCESS", "SUBMITTED"] },
+        executionResult: { in: ["SUCCESS", "SUBMITTED", "UNKNOWN"] },
       },
       select: { id: true },
     });
@@ -314,4 +327,71 @@ export async function rollbackRecommendation(
       message: rollbackMessage,
     };
   });
+  } catch (error) {
+    if (!rollbackClaimed) {
+      throw error;
+    }
+
+    const message =
+      error instanceof Error ? error.message : "Unknown rollback failure.";
+
+    try {
+      await db.$transaction(async (tx) => {
+        const recoveryClaim = await tx.recommendation.updateMany({
+          where: {
+            id: input.recommendationId,
+            executionState: "SUBMITTED",
+          },
+          data: {
+            executionState: "UNKNOWN",
+            executionError: `Rollback outcome uncertain: ${message}`.slice(0, 1000),
+          },
+        });
+
+        if (recoveryClaim.count === 1) {
+          await tx.auditLog.create({
+            data: {
+              amazonAccountId: account.id,
+              recommendationId: input.recommendationId,
+              entityType,
+              entityId,
+              action: "ROLLBACK",
+              previousValue: Number.isFinite(currentValue) ? String(currentValue) : null,
+              newValue: String(restoredValue),
+              reason: "Rollback outcome is uncertain; manual reconciliation is required.",
+              aiModel: "deterministic-engine-v3",
+              promptVersion: "not-applicable",
+              strategyVersion: mode === "REAL" ? "production-v1" : "demo-v1",
+              approvalStatus: "APPROVED",
+              executionResult: "UNKNOWN",
+              amazonRequestId: amazonRequestId || null,
+              connectorMode: mode,
+              rawResponse: JSON.stringify({
+                mode,
+                actor: input.actor ?? "unknown",
+                rollbackOfAuditLogId: originalAudit.id,
+                requestId: amazonRequestId || null,
+                verified: false,
+                error: message.slice(0, 1000),
+                reconciliationRequired: true,
+              }),
+              rollbackInfo: JSON.stringify({
+                available: false,
+                rollbackOfAuditLogId: originalAudit.id,
+              }),
+            },
+          });
+        }
+      });
+    } catch (recoveryError) {
+      console.error(
+        "[rollback] Failed to persist uncertain rollback state and audit",
+        recoveryError
+      );
+    }
+
+    throw new Error(
+      "Rollback outcome is uncertain. Automatic retry is blocked; reconcile the external account and audit log before proceeding."
+    );
+  }
 }

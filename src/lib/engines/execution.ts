@@ -25,13 +25,25 @@ export type ExecutionResult = {
   verifiedAt?: string;
 };
 
+export type ExecutionDependencies = {
+  db?: typeof prisma;
+  connectorFactory?: typeof getAmazonConnector;
+  validate?: typeof validateRecommendation;
+  authorize?: typeof authorizeExecution;
+};
+
 export async function executeRecommendation(
-  input: ExecuteInput
+  input: ExecuteInput,
+  dependencies: ExecutionDependencies = {}
 ): Promise<ExecutionResult> {
+  const db = dependencies.db ?? prisma;
+  const connectorFactory = dependencies.connectorFactory ?? getAmazonConnector;
+  const validate = dependencies.validate ?? validateRecommendation;
+  const authorize = dependencies.authorize ?? authorizeExecution;
   const approvalSource = input.approvalSource ?? "HUMAN_APPROVAL";
 
   // 1. Fetch recommendation with full context
-  const recommendation = await prisma.recommendation.findUnique({
+  const recommendation = await db.recommendation.findUnique({
     where: {
       id: input.recommendationId,
     },
@@ -64,7 +76,7 @@ export async function executeRecommendation(
   // Every execution caller — human, scheduler, or future API — must
   // pass the same recommendation validation before any authorization
   // or Amazon write can occur.
-  const validation = await validateRecommendation(recommendation);
+  const validation = await validate(recommendation);
 
   if (!validation.passed) {
     throw new Error(
@@ -75,7 +87,7 @@ export async function executeRecommendation(
   const account = recommendation.amazonAccount;
 
   // 3. Authorize via Single Server-Side Authorization Boundary
-  const auth = await authorizeExecution({
+  const auth = await authorize({
     organizationId: account.organizationId,
     amazonAccountId: account.id,
     recommendationId: recommendation.id,
@@ -105,16 +117,27 @@ export async function executeRecommendation(
   }
 
   // 4. Obtain connector (Real or Mock)
-  const { connector, mode } = getAmazonConnector(account);
+  const { connector, mode } = connectorFactory(account);
 
-  // 5. Mark state as SUBMITTED before initiating write
-  await prisma.recommendation.update({
-    where: { id: recommendation.id },
+  // 5. Atomically claim the recommendation before any Amazon write.
+  // Only one concurrent caller can transition an eligible PENDING record.
+  const claim = await db.recommendation.updateMany({
+    where: {
+      id: recommendation.id,
+      status: approvalSource === "AUTOPILOT_POLICY" ? "PENDING" : "APPROVED",
+      executionState: "PENDING",
+    },
     data: {
       executionState: "SUBMITTED",
       connectorMode: mode,
     },
   });
+
+  if (claim.count !== 1) {
+    throw new Error(
+      "Execution claim rejected: recommendation is no longer eligible or is already being processed."
+    );
+  }
 
   let entityType = "";
   let entityId = "";
@@ -127,6 +150,8 @@ export async function executeRecommendation(
 
   const effectiveProfileId =
     account.profileId || "default-profile";
+
+  let writeAttempted = false;
 
   try {
     // ----------------------------------------------------
@@ -157,6 +182,7 @@ export async function executeRecommendation(
         campaignId: recommendation.keyword.campaignId,
       };
 
+      writeAttempted = true;
       const writeRes = await connector.updateKeywordBid(
         effectiveProfileId,
         {
@@ -229,6 +255,7 @@ export async function executeRecommendation(
         dailyBudget: previousValue,
       };
 
+      writeAttempted = true;
       const writeRes =
         await connector.updateCampaignBudget(
           effectiveProfileId,
@@ -302,6 +329,7 @@ export async function executeRecommendation(
           recommendation.searchTerm.classification,
       };
 
+      writeAttempted = true;
       const writeRes =
         await connector.createNegativeKeyword(
           effectiveProfileId,
@@ -376,6 +404,7 @@ export async function executeRecommendation(
       };
 
       // Create keyword in Amazon.
+      writeAttempted = true;
       const writeRes =
         await connector.createKeyword(
           effectiveProfileId,
@@ -456,7 +485,7 @@ export async function executeRecommendation(
     // after verified success.
     const verifiedTimestamp = new Date();
 
-    return await prisma.$transaction(async (tx) => {
+    return await db.$transaction(async (tx) => {
       // Update local keyword bid.
       if (
         entityType === "keyword" &&
@@ -676,14 +705,14 @@ export async function executeRecommendation(
       };
     });
   } catch (err: any) {
-    // Record failure in state machine.
-    await prisma.recommendation.update({
+    // After an external write is attempted, the outcome may be uncertain.
+    await db.recommendation.update({
       where: {
         id: recommendation.id,
       },
       data: {
-        executionState: "FAILED",
-        executionError: err.message,
+        executionState: writeAttempted ? "UNKNOWN" : "FAILED",
+        executionError: String(err?.message ?? err).slice(0, 2000),
       },
     });
 
