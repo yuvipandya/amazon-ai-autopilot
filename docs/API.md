@@ -20,7 +20,6 @@ All routes are implemented as Next.js App Router route handlers under `src/app/a
 | `/api/cron/autopilot` | GET, POST | Runs the scheduled autopilot cycle; requires cron bearer secret |
 | `/api/demo/retry` | POST | Demo/retry workflow |
 | `/api/settings` | GET, POST | Settings read/update |
-| `/api/auth/[...nextauth]` | GET, POST | Authentication callbacks |
 
 The production build also contains these UI routes: `/`, `/login`, `/activity`, `/ai-changes`, `/products`, `/products/[asin]`, and `/settings`. UI routes are not API endpoints.
 
