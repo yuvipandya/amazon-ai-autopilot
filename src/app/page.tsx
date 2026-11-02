@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
@@ -14,7 +15,6 @@ import {
   Clock3,
   Gauge,
   Home as HomeIcon,
-  Layers3,
   LineChart,
   Menu,
   Package,
@@ -282,6 +282,7 @@ function actionLabel(actionType: string) {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [recommendations, setRecommendations] = useState<
     Recommendation[]
@@ -1074,7 +1075,7 @@ export default function Home() {
                   className="text-button"
                   onClick={() => {
                     setActiveSection("AI Changes");
-                    window.location.href = "/ai-changes";
+                    router.push("/ai-changes");
                   }}
                 >
                   Review all
@@ -1162,7 +1163,7 @@ export default function Home() {
                           className="review-button"
                           onClick={() => {
                             setActiveSection("AI Changes");
-                            window.location.href = "/ai-changes";
+                            router.push("/ai-changes");
                           }}
                         >
                           Review
@@ -1248,7 +1249,7 @@ export default function Home() {
                 className="text-button"
                 onClick={() => {
                   setActiveSection("Products");
-                  window.location.href = "/products";
+                  router.push("/products");
                 }}
               >
                 View products

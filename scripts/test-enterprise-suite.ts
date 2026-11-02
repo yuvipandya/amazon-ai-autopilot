@@ -213,7 +213,7 @@ async function runAllTests() {
   // -------------------------------------------------------------------------
   console.log("\n--- TEST GROUP 3: Amazon Connector & Execution State Machine ---");
 
-  const { connector, mode } = getAmazonConnector(account);
+  const { mode } = getAmazonConnector(account);
   assert(mode === "DEMO", "Connector Mode: Accurately identifies DEMO mode without live credentials");
 
   // Create a clean test recommendation to execute

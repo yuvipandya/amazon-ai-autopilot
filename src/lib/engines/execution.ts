@@ -117,7 +117,17 @@ export async function executeRecommendation(
   }
 
   // 4. Obtain connector (Real or Mock)
-  const { connector, mode } = connectorFactory(account);
+  const { connector, mode, diagnostic } = connectorFactory(account);
+
+  // A live account must never "execute" against the mock connector: the
+  // local database would be updated while Amazon is untouched.
+  if (account.isLiveAccount && mode !== "REAL") {
+    throw new Error(
+      `Live Amazon account cannot execute in ${mode} mode. Missing configuration: ${
+        diagnostic?.missingFields?.join(", ") || "unknown"
+      }.`
+    );
+  }
 
   // 5. Atomically claim the recommendation before any Amazon write.
   // Only one concurrent caller can transition an eligible PENDING record.
@@ -704,7 +714,7 @@ export async function executeRecommendation(
           verifiedTimestamp.toISOString(),
       };
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     // After an external write is attempted, the outcome may be uncertain.
     await db.recommendation.update({
       where: {
@@ -712,7 +722,7 @@ export async function executeRecommendation(
       },
       data: {
         executionState: writeAttempted ? "UNKNOWN" : "FAILED",
-        executionError: String(err?.message ?? err).slice(0, 2000),
+        executionError: String(err instanceof Error ? err.message : err).slice(0, 2000),
       },
     });
 

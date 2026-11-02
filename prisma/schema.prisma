@@ -345,6 +345,9 @@ model Recommendation {
   @@index([productId])
   @@index([campaignId])
   @@index([idempotencyKey])
+  // Database-level guard against duplicate recommendations from concurrent
+  // workers. Rows with a NULL idempotencyKey never conflict (PostgreSQL).
+  @@unique([amazonAccountId, idempotencyKey])
 }
 
 model AuditLog {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rollbackRecommendation } from "../src/lib/engines/rollback";
+import { rollbackRecommendation, type RollbackDependencies } from "../src/lib/engines/rollback";
 
 type Scenario = {
   writeFails?: boolean;
@@ -10,7 +10,7 @@ type Scenario = {
 
 function makeFixture(scenario: Scenario = {}) {
   let executionState = "VERIFIED_SUCCESS";
-  let rollbackEvent: any = null;
+  let rollbackEvent: { id: string; [key: string]: unknown; rawResponse?: string | null } | null = null;
   let transactionCalls = 0;
   let writeCalls = 0;
   let verificationCalls = 0;
@@ -51,31 +51,31 @@ function makeFixture(scenario: Scenario = {}) {
 
   const tx = {
     auditLog: {
-      findFirst: async ({ where }: any) =>
+      findFirst: async ({ where }: { where: Record<string, unknown> }) =>
         where.action === "ROLLBACK" ? rollbackEvent : null,
-      create: async ({ data }: any) => {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
         rollbackEvent = { id: "fake-rollback-audit", ...data };
         return rollbackEvent;
       },
     },
     keyword: {
-      update: async ({ data }: any) => {
-        keyword.bid = data.bid;
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        keyword.bid = Number(data.bid);
         return keyword;
       },
     },
     campaign: { update: async () => ({}) },
     recommendation: {
-      update: async ({ data }: any) => {
-        executionState = data.executionState;
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        executionState = String(data.executionState);
         return { id: "fake-recommendation", executionState };
       },
-      updateMany: async ({ where, data }: any) => {
+      updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
         if (
           where.executionState === "SUBMITTED" &&
           executionState === "SUBMITTED"
         ) {
-          executionState = data.executionState;
+          executionState = String(data.executionState);
           return { count: 1 };
         }
         return { count: 0 };
@@ -83,9 +83,9 @@ function makeFixture(scenario: Scenario = {}) {
     },
   };
 
-  const db: any = {
+  const db = {
     auditLog: {
-      findFirst: async ({ where }: any) => {
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => {
         if (where.action === "ROLLBACK") return rollbackEvent;
         return originalAudit;
       },
@@ -98,12 +98,12 @@ function makeFixture(scenario: Scenario = {}) {
       findUniqueOrThrow: async () => account,
     },
     recommendation: {
-      updateMany: async ({ where, data }: any) => {
+      updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
         if (
           where.executionState === "VERIFIED_SUCCESS" &&
           executionState === "VERIFIED_SUCCESS"
         ) {
-          executionState = data.executionState;
+          executionState = String(data.executionState);
           return { count: 1 };
         }
 
@@ -111,14 +111,14 @@ function makeFixture(scenario: Scenario = {}) {
           where.executionState === "SUBMITTED" &&
           executionState === "SUBMITTED"
         ) {
-          executionState = data.executionState;
+          executionState = String(data.executionState);
           return { count: 1 };
         }
 
         return { count: 0 };
       },
     },
-    $transaction: async (callback: any) => {
+    $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => {
       transactionCalls++;
 
       const before = {
@@ -150,7 +150,7 @@ function makeFixture(scenario: Scenario = {}) {
     },
   };
 
-  const connector: any = {
+  const connector = {
     updateKeywordBid: async () => {
       writeCalls++;
       return {
@@ -170,7 +170,7 @@ function makeFixture(scenario: Scenario = {}) {
     },
   };
 
-  const connectorFactory: any = () => ({
+  const connectorFactory = () => ({
     connector,
     mode: "DEMO",
     diagnostic: { configured: false, missingFields: [] },
@@ -183,7 +183,7 @@ function makeFixture(scenario: Scenario = {}) {
         organizationId: "fake-org",
         actor: "isolated-test",
       },
-      { db, connectorFactory } as any
+      { db, connectorFactory } as unknown as RollbackDependencies
     );
 
   return {

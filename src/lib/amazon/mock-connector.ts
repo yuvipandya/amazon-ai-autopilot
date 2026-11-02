@@ -99,13 +99,7 @@ export class MockAmazonConnector implements IAmazonConnector {
     ];
   }
 
-  async getSearchTerms(
-    _options: {
-      profileId: string;
-      startDate: string;
-      endDate: string;
-    }
-  ) {
+  async getSearchTerms() {
     return [
       {
         amazonSearchTermId: "mock-camp-001:kundan bridal necklace",

@@ -300,14 +300,19 @@ export class IngestionService {
         reportPeriod,
         durationMs: Date.now() - startTime,
       };
-    } catch (error: any) {
+    
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
       await prisma.amazonAccount.update({
         where: { id: account.id },
         data: {
           syncStatus: "ERROR",
-          syncError: error.message,
+          syncError: errorMessage,
         },
       });
+
 
       return {
         success: false,
@@ -319,7 +324,7 @@ export class IngestionService {
         searchTermsCount: 0,
         reportPeriod,
         durationMs: Date.now() - startTime,
-        error: error.message,
+        error: errorMessage,
       };
     }
   }

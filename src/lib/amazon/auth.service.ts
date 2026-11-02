@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AmazonCredentials, AmazonProfile } from "./types";
 
 interface TokenCacheEntry {
@@ -105,7 +106,9 @@ export class AmazonAuthService {
   static async getAccessToken(
     credentials: AmazonCredentials
   ): Promise<string> {
-    const cacheKey = credentials.clientId;
+    const cacheKey = createHash("sha256")
+      .update(`${credentials.clientId}:${credentials.refreshToken}`)
+      .digest("hex");
     const cached = tokenCache.get(cacheKey);
 
     if (cached && cached.expiresAt > Date.now() + 5 * 60 * 1000) {

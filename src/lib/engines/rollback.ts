@@ -104,7 +104,16 @@ export async function rollbackRecommendation(
     throw new Error("Rollback already exists for this recommendation.");
   }
 
-  const { connector, mode } = connectorFactory(account);
+  const { connector, mode, diagnostic } = connectorFactory(account);
+
+  // Never "roll back" a live account against the mock connector.
+  if (account.isLiveAccount && mode !== "REAL") {
+    throw new Error(
+      `Live Amazon account cannot roll back in ${mode} mode. Missing configuration: ${
+        diagnostic?.missingFields?.join(", ") || "unknown"
+      }.`
+    );
+  }
   const profileId = account.profileId || "default-profile";
 
   let currentValue: number;

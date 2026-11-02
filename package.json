@@ -12,6 +12,8 @@
     "test:gemini": "tsx scripts/test-gemini.ts",
     "test:enterprise": "tsx scripts/test-enterprise-suite.ts",
     "test:amazon-reporting": "tsx scripts/test-amazon-reporting.ts",
+    "test:amazon-connector": "tsx scripts/test-amazon-connector-v3.ts",
+    "test:idempotency": "tsx scripts/test-search-term-idempotency.ts",
     "test": "tsx scripts/test-safety.ts && tsx scripts/test-gemini.ts && tsx scripts/test-enterprise-suite.ts"
   },
   "dependencies": {

@@ -45,3 +45,7 @@ next-env.d.ts
 logfile*
 
 amazon-ai-autopilot-production-backup-*.dump
+
+autopilot-changed-files.zip
+autopilot-changes.patch
+autopilot-src.zip

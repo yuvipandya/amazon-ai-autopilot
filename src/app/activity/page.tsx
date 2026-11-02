@@ -172,16 +172,13 @@ export default function ActivityPage() {
     "ALL" | "SUCCESS" | "IGNORED"
   >("ALL");
 
-  const loadActivity = useCallback(
+    const loadActivity = useCallback(
     async (refresh = false) => {
       try {
         if (refresh) {
           setRefreshing(true);
-        } else {
-          setLoading(true);
+          setError("");
         }
-
-        setError("");
 
         const response = await fetch(
           "/api/activity",
@@ -189,6 +186,8 @@ export default function ActivityPage() {
             cache: "no-store",
           }
         );
+
+        setError("");
 
         if (!response.ok) {
           throw new Error(
@@ -214,8 +213,21 @@ export default function ActivityPage() {
   );
 
   useEffect(() => {
-    loadActivity();
-  }, [loadActivity]);
+  const controller = new AbortController();
+
+  const run = async () => {
+    await Promise.resolve();
+    if (!controller.signal.aborted) {
+      await loadActivity();
+    }
+  };
+
+  void run();
+
+  return () => {
+    controller.abort();
+  };
+}, [loadActivity]);
 
   const filteredLogs = useMemo(() => {
     if (filter === "ALL") {

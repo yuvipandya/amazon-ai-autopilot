@@ -38,6 +38,13 @@ export function getAmazonConnector(
     };
   }
 
+  // A live account whose credentials are complete except for the advertising
+  // profile must not silently degrade to DEMO without saying why.
+  if (account?.isLiveAccount && status.configured && !effectiveCreds) {
+    status.missingFields.push("profileId (AMAZON_ADS_PROFILE_ID)");
+    status.configured = false;
+  }
+
   // Fallback to explicitly labeled DEMO mode
   if (!sharedMockConnector) {
     sharedMockConnector = new MockAmazonConnector();

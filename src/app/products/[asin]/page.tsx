@@ -307,7 +307,7 @@ export default async function ProductDetailPage({
           </div>
 
           <div className="product-metric-bars">
-            {recentMetrics.slice(-7).map((metric, index) => {
+            {recentMetrics.slice(-7).map((metric) => {
               const maxRevenue = Math.max(
                 ...recentMetrics.map((item) => item.revenue),
                 1,

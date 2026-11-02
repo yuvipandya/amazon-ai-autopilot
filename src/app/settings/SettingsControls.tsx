@@ -80,7 +80,7 @@ export default function SettingsControls({ account }: Props) {
   const [region, setRegion] = useState(account.region || "eu");
   const [lwaClientId, setLwaClientId] = useState("");
   const [lwaClientSecret, setLwaClientSecret] = useState("");
-  const [lwaRefreshToken, setLwaRefreshToken] = useState("");
+  const [lwaRefreshToken] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -184,8 +184,8 @@ export default function SettingsControls({ account }: Props) {
       setIsLive(false);
       setProfileId("");
       setMessage("Disconnected Amazon live account. Switched to DEMO mode.");
-    } catch (err: any) {
-      setMessage(err.message);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }

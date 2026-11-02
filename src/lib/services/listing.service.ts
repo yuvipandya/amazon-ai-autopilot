@@ -40,9 +40,8 @@ export class ListingOptimizationService {
     const nextVersion = (lastAudit?.version ?? 0) + 1;
 
     // Evaluate title length and keywords
-    const titleLength = product.title.length;
-    let score = product.listingScore;
-    let reason = "Title is concise but could include high-volume converting search terms.";
+    const score = product.listingScore;
+    const reason = "Title is concise but could include high-volume converting search terms.";
 
     const recommendedTitle = product.title.includes("Set")
       ? `${product.title} - Handcrafted Premium Design for Special Occasions`

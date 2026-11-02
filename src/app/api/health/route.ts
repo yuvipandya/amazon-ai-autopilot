@@ -20,8 +20,9 @@ export async function GET() {
     });
     accountCount = accounts.length;
     hasLiveAccount = accounts.some((a) => a.isLiveAccount);
-  } catch (err: any) {
-    dbStatus = `UNHEALTHY: ${err.message}`;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    dbStatus = `UNHEALTHY: ${message}`;
   }
 
   const geminiConfigured = Boolean(

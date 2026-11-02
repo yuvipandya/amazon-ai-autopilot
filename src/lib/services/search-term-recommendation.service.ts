@@ -4,6 +4,10 @@ import {
   SearchTermRecommendation,
 } from "@/lib/engines/search-term-recommendation";
 import { SearchTermClassification } from "@/lib/engines/search-term-intelligence";
+import {
+  persistSearchTermRecommendation,
+  type RecommendationStore,
+} from "./search-term-recommendation.persistence";
 
 export interface PersistedSearchTermRecommendation {
   recommendationId: string;
@@ -189,123 +193,88 @@ export class SearchTermRecommendationService {
         recommendation.actionType
       );
 
-      const existing =
-        await prisma.recommendation.findFirst({
-          where: {
-            idempotencyKey,
-            amazonAccountId: product.amazonAccountId,
-            searchTermId: term.id,
-          },
-          select: {
-            id: true,
-            productId: true,
-          },
-        });
+      
+      const title = isHarvest
+        ? `Harvest keyword: ${term.value}`
+        : `Add negative keyword: ${term.value}`;
 
-      if (existing) {
-        if (
-          existing.productId &&
-          existing.productId !== product.id
-        ) {
-          throw new Error(
-            `Recommendation ${existing.id} has conflicting product ownership.`
-          );
-        }
+      const expectedImpact = isHarvest
+        ? `Promote proven search demand into an EXACT keyword at a starting bid of ₹${recommendedBid?.toFixed(2)} after human approval.`
+        : "Reduce spend on non-converting search traffic.";
 
-        await prisma.recommendation.update({
-          where: {
-            id: existing.id,
-          },
-          data: {
+      const confidence =
+        recommendation.priority === "HIGH"
+          ? 0.9
+          : recommendation.priority === "MEDIUM"
+            ? 0.75
+            : 0.6;
+
+      const risk = isNegative ? "MEDIUM" : "LOW";
+
+      const connectorMode = product.amazonAccount.isLiveAccount
+        ? "REAL"
+        : "DEMO";
+
+      const result = await persistSearchTermRecommendation(
+        prisma.recommendation as unknown as RecommendationStore,
+        {
+          amazonAccountId: product.amazonAccountId,
+          productId: product.id,
+          searchTermId: term.id,
+          idempotencyKey,
+          // Applied only to a recommendation that is still fully PENDING.
+          refreshData: {
             productId: product.id,
-            title: isHarvest
-              ? `Harvest keyword: ${term.value}`
-              : `Add negative keyword: ${term.value}`,
+            title,
             description: recommendation.reason,
             reason: recommendation.reason,
             currentValue: term.acos,
-            recommendedValue: isHarvest
-              ? recommendedBid
-              : null,
-            expectedImpact: isHarvest
-              ? `Promote proven search demand into an EXACT keyword at a starting bid of ₹${recommendedBid?.toFixed(2)} after human approval.`
-              : "Reduce spend on non-converting search traffic.",
-            confidence:
-              recommendation.priority === "HIGH"
-                ? 0.9
-                : recommendation.priority === "MEDIUM"
-                  ? 0.75
-                  : 0.6,
-            risk: isNegative ? "MEDIUM" : "LOW",
+            recommendedValue: isHarvest ? recommendedBid : null,
+            expectedImpact,
+            confidence,
+            risk,
             requiresApproval: true,
             approvalSource: "HUMAN_APPROVAL",
-            connectorMode:
-              product.amazonAccount.isLiveAccount
-                ? "REAL"
-                : "DEMO",
+            connectorMode,
           },
-        });
-
-        persisted.push({
-          recommendationId: existing.id,
-          searchTermId: term.id,
-          value: term.value,
-          actionType: recommendation.actionType,
-          classification: term.classification,
-          matchType,
-          recommendedBid,
-        });
-
-        continue;
-      }
-
-      const created =
-        await prisma.recommendation.create({
-          data: {
+          createData: {
             amazonAccountId: product.amazonAccountId,
             productId: product.id,
             campaignId: term.campaignId,
             searchTermId: term.id,
             actionType: recommendation.actionType,
-            title: isHarvest
-              ? `Harvest keyword: ${term.value}`
-              : `Add negative keyword: ${term.value}`,
+            title,
             description: recommendation.reason,
             reason: recommendation.reason,
             currentValue: term.acos,
-            recommendedValue: isHarvest
-              ? recommendedBid
-              : undefined,
+            recommendedValue: isHarvest ? recommendedBid : undefined,
             changePercent: undefined,
-            expectedImpact: isHarvest
-              ? `Promote proven search demand into an EXACT keyword at a starting bid of ₹${recommendedBid?.toFixed(2)} after human approval.`
-              : "Reduce spend on non-converting search traffic.",
-            confidence:
-              recommendation.priority === "HIGH"
-                ? 0.9
-                : recommendation.priority === "MEDIUM"
-                  ? 0.75
-                  : 0.6,
-            risk: isNegative ? "MEDIUM" : "LOW",
+            expectedImpact,
+            confidence,
+            risk,
             status: "PENDING",
             executionState: "PENDING",
             approvalStatus: "PENDING",
             approvalSource: "HUMAN_APPROVAL",
-            connectorMode:
-              product.amazonAccount.isLiveAccount
-                ? "REAL"
-                : "DEMO",
+            connectorMode,
             dataWindow: "SEARCH_TERM_INTELLIGENCE",
             requiresApproval: true,
             idempotencyKey,
           },
-          select: {
-            id: true,
-          },
-        });
+        }
+      );
+
+      // Non-pending history and concurrently changed rows are left untouched
+      // and are not reported as persisted.
+      if (
+        result.outcome !== "CREATED" &&
+        result.outcome !== "REFRESHED"
+      ) {
+        continue;
+      }
 
       persisted.push({
-        recommendationId: created.id,
+        recommendationId: result.recommendationId,
         searchTermId: term.id,
         value: term.value,
         actionType: recommendation.actionType,

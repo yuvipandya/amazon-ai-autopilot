@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import { withRetry } from "@/lib/engines/retry";
 import { requireAuth } from "@/lib/auth/authorization";
@@ -17,12 +18,8 @@ export async function POST() {
     );
   }
 
-  let failures = 0;
-
   const result = await withRetry(
     async (attempt) => {
-      failures = attempt;
-
       if (attempt < 3) {
         throw new Error(
           `Amazon Mock API returned 503 on attempt ${attempt}.`
@@ -32,8 +29,7 @@ export async function POST() {
       return {
         connector: "MockAmazonConnector",
         status: 200,
-        message:
-          "Mock Amazon API recovered after retry.",
+        message: "Mock Amazon API recovered after retry.",
       };
     },
     {

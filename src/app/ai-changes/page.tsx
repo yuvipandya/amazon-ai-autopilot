@@ -17,7 +17,6 @@ import {
   Clock3,
   Filter,
   Gauge,
-  Lock,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -148,17 +147,17 @@ function formatAction(action: string) {
 
 function formatMoney(value: number | null) {
   if (value === null || Number.isNaN(value)) {
-    return "—";
+    return "â€”";
   }
 
-  return `₹${value.toLocaleString("en-IN", {
+  return `â‚¹${value.toLocaleString("en-IN", {
     maximumFractionDigits: 2,
   })}`;
 }
 
 function formatPercent(value: number | null) {
   if (value === null || Number.isNaN(value)) {
-    return "—";
+    return "â€”";
   }
 
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
@@ -297,7 +296,21 @@ export default function AIChangesPage() {
   );
 
   useEffect(() => {
-    loadRecommendations();
+    const controller = new AbortController();
+
+    const run = async () => {
+      await Promise.resolve();
+
+      if (!controller.signal.aborted) {
+        await loadRecommendations();
+      }
+    };
+
+    void run();
+
+    return () => {
+      controller.abort();
+    };
   }, [loadRecommendations]);
 
   const filteredRecommendations = useMemo(() => {
@@ -1593,7 +1606,7 @@ export default function AIChangesPage() {
                     </div>
                   </div>
                 )}
-                
+
               {actionResult?.success &&
   actionResult.execution && (
     <div className="rollback-panel">
